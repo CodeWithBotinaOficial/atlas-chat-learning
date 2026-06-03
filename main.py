@@ -1,3 +1,4 @@
+# main.py
 """
 main.py
 
@@ -37,8 +38,8 @@ def main():
     Initializes the AtlasBrain, handles user interaction,
     learning, response generation, and persistent saving.
     """
-    model_file = "atlas_memory.pkl"
-    brain = AtlasBrain(model_file=model_file)
+    # Updated to use new model and vocab paths
+    brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl")
     print("Welcome to Atlas! Type 'quit' or 'exit' to save and exit.")
 
     interaction_count = 0
