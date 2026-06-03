@@ -35,10 +35,13 @@ Once running, Atlas will prompt you for input. Type your message and press Enter
 
 ```
 You: Hello Atlas!
-Atlas: I am learning...
+Atlas: hello world this is a test
 You: What is your name?
-Atlas: I am learning...
+Atlas: this is another test sentence
+You: Tell me more about yourself.
+Atlas: i am still learning
 ```
+Type `quit` or `exit` to save Atlas's memory and end the session.
 
 ## Folder Structure
 
@@ -53,5 +56,18 @@ The project is organized as follows:
 │   └── test_brain.py       # Tests for the AtlasBrain module
 ├── main.py                 # Main entry point for the application
 ├── requirements.txt        # Lists project dependencies
+├── atlas_memory.pkl        # (Generated) Persistent memory file for Atlas's learned knowledge
 └── README.md               # This file
 ```
+
+## Learning Mechanism (N-grams)
+
+Atlas learns incrementally from your conversations using an n-gram model. Specifically, it builds:
+
+*   **Unigrams**: Individual words and their frequencies. These are used to start new sentences.
+*   **Bigrams**: Pairs of consecutive words (e.g., "hello world"). Atlas learns which word is likely to follow another.
+*   **Trigrams**: Sequences of three consecutive words (e.g., "the quick brown"). This allows Atlas to generate more coherent and contextually relevant phrases.
+
+When you provide input, Atlas tokenizes your text, updates the frequencies of these n-grams, and expands its vocabulary. When generating a response, it tries to predict the next word based on the preceding one or two words, choosing from learned patterns with higher frequency.
+
+The more you interact with Atlas, the larger its vocabulary and n-gram knowledge base become, leading to more varied and "intelligent" responses over time. Its memory is saved to `atlas_memory.pkl` to ensure persistence across sessions.

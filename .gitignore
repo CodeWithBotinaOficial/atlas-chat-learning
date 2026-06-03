@@ -1,7 +1,19 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc
-.env
-venv/
-.vscode/
+*.pyd
+*.pyo
+*.pkl
+
+# IDE-specific files
 .idea/
-*.log
+.vscode/
+
+# Virtual environment
+venv/
+env/
+
+# OS generated files
+.DS_Store
+.Trashes
+Thumbs.db
