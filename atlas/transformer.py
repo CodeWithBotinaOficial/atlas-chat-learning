@@ -40,14 +40,22 @@ def relu_backward(dA, Z):
     dZ[Z <= 0] = 0
     return dZ
 
+def xavier_init(input_dim, output_dim):
+    """
+    Xavier/Glorot initialization for weights.
+    """
+    limit = np.sqrt(6 / (input_dim + output_dim))
+    return np.random.uniform(-limit, limit, size=(input_dim, output_dim))
 
-def label_smoothing_loss(predictions, targets, vocab_size, smoothing=0.1, epsilon=1e-9):
+
+def label_smoothing_loss(predictions, targets, vocab_size, smoothing=0.1, epsilon=1e-9, padding_mask=None):
     """
     Compute cross-entropy loss with label smoothing.
     predictions: (batch_size * seq_len, vocab_size) - softmax probabilities
     targets: (batch_size * seq_len,) - integer class labels
     vocab_size: int - total number of possible classes
     smoothing: float - smoothing factor (e.g., 0.1)
+    padding_mask: (batch_size * seq_len,) - boolean mask, True for valid tokens, False for padding.
     """
     # Clip predictions to avoid log(0)
     predictions = np.clip(predictions, epsilon, 1. - epsilon)
@@ -56,27 +64,51 @@ def label_smoothing_loss(predictions, targets, vocab_size, smoothing=0.1, epsilo
     targets_one_hot = np.eye(vocab_size)[targets]
 
     # Apply label smoothing
-    # (1 - smoothing) * one_hot + smoothing / vocab_size
     smoothed_targets = targets_one_hot * (1 - smoothing) + smoothing / vocab_size
 
-    loss = -np.sum(smoothed_targets * np.log(predictions)) / predictions.shape[0]
+    # Apply padding mask
+    if padding_mask is not None:
+        # Expand padding_mask to match predictions shape
+        expanded_padding_mask = padding_mask[:, np.newaxis] # (batch_size * seq_len, 1)
+        smoothed_targets = smoothed_targets * expanded_padding_mask
+        # Mask predictions too, so log(0) doesn't contribute to loss for padded positions
+        predictions = predictions * expanded_padding_mask + (1 - expanded_padding_mask) * epsilon # Avoid log(0) for masked positions
+
+    # Calculate loss, only for non-padded positions
+    if padding_mask is not None:
+        num_valid_tokens = np.sum(padding_mask)
+        if num_valid_tokens == 0:
+            return 0.0 # No valid tokens, no loss
+        loss = -np.sum(smoothed_targets * np.log(predictions)) / num_valid_tokens
+    else:
+        loss = -np.sum(smoothed_targets * np.log(predictions)) / predictions.shape[0]
     return loss
 
 
-def label_smoothing_backward(predictions, targets, vocab_size, smoothing=0.1):
+def label_smoothing_backward(predictions, targets, vocab_size, smoothing=0.1, padding_mask=None):
     """
     Compute gradient of cross-entropy loss with label smoothing with respect to predictions.
     predictions: (batch_size * seq_len, vocab_size) - softmax probabilities
     targets: (batch_size * seq_len,) - integer class labels
     vocab_size: int - total number of possible classes
     smoothing: float - smoothing factor (e.g., 0.1)
+    padding_mask: (batch_size * seq_len,) - boolean mask, True for valid tokens, False for padding.
     Returns: (batch_size * seq_len, vocab_size)
     """
     targets_one_hot = np.eye(vocab_size)[targets]
     smoothed_targets = targets_one_hot * (1 - smoothing) + smoothing / vocab_size
 
-    grad = (predictions - smoothed_targets) # This is the gradient for softmax + cross-entropy
-    return grad / predictions.shape[0]  # Average over batch size
+    grad = (predictions - smoothed_targets)
+
+    if padding_mask is not None:
+        expanded_padding_mask = padding_mask[:, np.newaxis]
+        grad = grad * expanded_padding_mask # Zero out gradients for padded positions
+        num_valid_tokens = np.sum(padding_mask)
+        if num_valid_tokens == 0:
+            return np.zeros_like(grad) # No valid tokens, no gradient
+        return grad / num_valid_tokens
+    else:
+        return grad / predictions.shape[0]  # Average over batch size
 
 
 class PositionalEncoding:
@@ -120,16 +152,16 @@ class MultiHeadSelfAttention:
         self.embed_dim = embed_dim
         self.dropout_rate = dropout_rate
 
-        # Weights for Q, K, V for all heads
-        self.W_q = np.random.randn(embed_dim, embed_dim) * 0.01
+        # Weights for Q, K, V for all heads (Xavier initialization)
+        self.W_q = xavier_init(embed_dim, embed_dim)
         self.b_q = np.zeros(embed_dim)
-        self.W_k = np.random.randn(embed_dim, embed_dim) * 0.01
+        self.W_k = xavier_init(embed_dim, embed_dim)
         self.b_k = np.zeros(embed_dim)
-        self.W_v = np.random.randn(embed_dim, embed_dim) * 0.01
+        self.W_v = xavier_init(embed_dim, embed_dim)
         self.b_v = np.zeros(embed_dim)
 
-        # Output projection
-        self.W_o = np.random.randn(embed_dim, embed_dim) * 0.01
+        # Output projection (Xavier initialization)
+        self.W_o = xavier_init(embed_dim, embed_dim)
         self.b_o = np.zeros(embed_dim)
 
         self.params = {
@@ -234,6 +266,7 @@ class MultiHeadSelfAttention:
         d_attention_scores = attention_weights * (d_attention_weights - np.sum(d_attention_weights * attention_weights, axis=-1, keepdims=True))
 
         if mask is not None:
+            # Ensure mask broadcasting works correctly with d_attention_scores shape
             mask = np.broadcast_to(mask, d_attention_scores.shape)
             d_attention_scores[mask == -np.inf] = 0
 
@@ -267,9 +300,9 @@ class FeedForward:
     """
 
     def __init__(self, embed_dim, ff_dim, dropout_rate=0.0):
-        self.W1 = np.random.randn(embed_dim, ff_dim) * 0.01
+        self.W1 = xavier_init(embed_dim, ff_dim)
         self.b1 = np.zeros(ff_dim)
-        self.W2 = np.random.randn(ff_dim, embed_dim) * 0.01
+        self.W2 = xavier_init(ff_dim, embed_dim)
         self.b2 = np.zeros(embed_dim)
         self.dropout_rate = dropout_rate
 
@@ -432,10 +465,11 @@ class TransformerBlock:
         d_x = d_x_from_attn_residual + d_x_from_norm1
         return d_x
 
-def _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=1.0):
+def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.0):
     """
     Applies top-k and top-p sampling to logits.
     logits: (vocab_size,) - raw logits for the next token.
+    vocab_size: int - total number of possible classes.
     top_k: int - if > 0, only consider the top_k most likely tokens.
     top_p: float - if < 1.0, only consider tokens whose cumulative probability
                    exceeds top_p.
@@ -445,15 +479,15 @@ def _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=1.0):
     # Apply temperature
     logits = logits / temperature
 
-    # Apply repetition penalty (already handled before this function)
-
-    # Cap top_k to the size of the logits array
-    _top_k = min(top_k, logits.shape[0]) if top_k > 0 else 0
+    # Cap top_k to the size of the logits array (vocab_size)
+    _top_k = min(top_k, vocab_size) if top_k > 0 else 0
 
     # Top-k filtering
     if _top_k > 0:
-        indices_to_remove = logits < np.sort(logits)[-_top_k] # Use _top_k here
-        logits[indices_to_remove] = -np.inf
+        # Get the _top_k values
+        top_k_values = np.partition(logits, -_top_k)[-_top_k:]
+        min_val_for_top_k = top_k_values[0] if len(top_k_values) > 0 else -np.inf
+        logits[logits < min_val_for_top_k] = -np.inf
 
     probabilities = softmax(logits[np.newaxis, :])[0]
 
@@ -463,14 +497,14 @@ def _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=1.0):
         sorted_probabilities = probabilities[sorted_indices]
         cumulative_probabilities = np.cumsum(sorted_probabilities)
 
-        # Remove tokens with cumulative probability above the threshold
         # Find the first index where cumulative probability > top_p
         cutoff_idx = np.where(cumulative_probabilities > top_p)[0]
+        
         if len(cutoff_idx) > 0:
             cutoff_idx = cutoff_idx[0]
-            # Keep at least one token
+            # Ensure at least one token is kept
             if cutoff_idx == 0 and len(sorted_probabilities) > 1:
-                cutoff_idx = 1
+                cutoff_idx = 1 # Keep at least the top 1 token
             elif cutoff_idx == 0 and len(sorted_probabilities) == 1:
                 pass # Keep the only token
             else:
@@ -478,22 +512,28 @@ def _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=1.0):
                 # Otherwise, keep tokens up to the cutoff.
                 if cumulative_probabilities[0] > top_p:
                     cutoff_idx = 1
-                
+            
             indices_to_remove = sorted_indices[cutoff_idx:]
             probabilities[indices_to_remove] = 0.0
             
             # Re-normalize probabilities
             if np.sum(probabilities) > 0:
                 probabilities = probabilities / np.sum(probabilities)
-            else: # Fallback to uniform if all probabilities become zero
-                probabilities = np.ones_like(probabilities) / len(probabilities)
+            # else: Fallback handled below
 
+    # Fallback if all probabilities are zero after filtering
+    if np.sum(probabilities) == 0:
+        # Revert to original (temperature-scaled) logits for fallback
+        # Get top 10 indices from the (temperature-scaled) logits
+        top_10_indices = np.argsort(logits)[::-1][:min(10, vocab_size)]
+        
+        if len(top_10_indices) > 0:
+            return np.random.choice(top_10_indices)
+        else:
+            # This case should ideally not happen if vocab_size > 0
+            return np.random.randint(0, vocab_size) # Random valid token
 
-    # Sample from the filtered distribution
-    if np.sum(probabilities) == 0: # Fallback if all probabilities are zero
-        return np.random.choice(len(logits))
-    
-    return np.random.choice(len(logits), p=probabilities)
+    return np.random.choice(vocab_size, p=probabilities)
 
 
 class Transformer:
@@ -510,12 +550,12 @@ class Transformer:
         self.max_seq_len = max_seq_len
         self.dropout_rate = dropout_rate
 
-        self.token_embedding = np.random.randn(vocab_size, embed_dim) * 0.01
+        self.token_embedding = xavier_init(vocab_size, embed_dim)
         self.positional_encoding = PositionalEncoding(embed_dim, max_seq_len)
         self.transformer_blocks = [
             TransformerBlock(embed_dim, num_heads, ff_dim, dropout_rate) for _ in range(num_layers)
         ]
-        self.output_layer = np.random.randn(embed_dim, vocab_size) * 0.01
+        self.output_layer = xavier_init(embed_dim, vocab_size)
         self.output_bias = np.zeros(vocab_size)
 
         # Collect all parameters into a single dictionary for easy access and saving
@@ -552,13 +592,13 @@ class Transformer:
             # print(f"Updating vocab size from {self.vocab_size} to {new_vocab_size}")
 
             # Expand token embedding matrix
-            new_embeddings = np.random.randn(new_vocab_size - self.vocab_size, self.embed_dim) * 0.01
+            new_embeddings = xavier_init(new_vocab_size - self.vocab_size, self.embed_dim)
             self.token_embedding = np.vstack((self.token_embedding, new_embeddings))
             self.params['token_embedding'] = self.token_embedding  # Update reference
             self.grads['token_embedding'] = np.zeros_like(self.token_embedding)  # Reset grads for new shape
 
             # Expand output layer weights
-            new_output_weights = np.random.randn(self.embed_dim, new_vocab_size - self.vocab_size) * 0.01
+            new_output_weights = xavier_init(self.embed_dim, new_vocab_size - self.vocab_size)
             self.output_layer = np.hstack((self.output_layer, new_output_weights))
             self.params['output_layer'] = self.output_layer  # Update reference
             self.grads['output_layer'] = np.zeros_like(self.output_layer)  # Reset grads for new shape
@@ -639,26 +679,40 @@ class Transformer:
         # Update weights
         self.update_weights(learning_rate)
 
-    def train_step(self, input_tokens, target_tokens, learning_rate=0.01, training=True):
+    def train_step(self, input_tokens, target_tokens, learning_rate=0.01, training=True, pad_token_id=0):
         """
         Performs one training step (forward, loss, backward, update).
         input_tokens: (batch_size, seq_len) - input token IDs.
         target_tokens: (batch_size, seq_len) - target token IDs (shifted input).
         learning_rate: float.
         training: bool, if True, apply dropout and look-ahead mask.
-        Returns: float - computed loss.
+        pad_token_id: int - ID of the padding token.
+        Returns: float - computed loss, or None if NaN/Inf detected.
         """
         # Forward pass
         output_logits = self.forward(input_tokens, training=training)
+
+        # Check for NaN/inf in output_logits
+        if np.any(np.isnan(output_logits)) or np.any(np.isinf(output_logits)):
+            print("WARNING: NaN or Inf detected in output_logits. Skipping gradient update.")
+            return None
 
         # Reshape for loss calculation: (batch_size * seq_len, vocab_size)
         predictions = softmax(output_logits.reshape(-1, self.vocab_size))
         targets_flat = target_tokens.flatten()
 
-        loss = label_smoothing_loss(predictions, targets_flat, self.vocab_size, smoothing=0.1)
+        # Create padding mask
+        padding_mask = (targets_flat != pad_token_id)
+
+        loss = label_smoothing_loss(predictions, targets_flat, self.vocab_size, smoothing=0.1, padding_mask=padding_mask)
+
+        # Check for NaN/inf in loss
+        if np.isnan(loss) or np.isinf(loss):
+            print("WARNING: NaN or Inf detected in loss. Skipping gradient update.")
+            return None
 
         # Backward pass
-        d_predictions = label_smoothing_backward(predictions, targets_flat, self.vocab_size, smoothing=0.1)
+        d_predictions = label_smoothing_backward(predictions, targets_flat, self.vocab_size, smoothing=0.1, padding_mask=padding_mask)
         d_output_logits = d_predictions.reshape(output_logits.shape)
 
         self.backward(d_output_logits, learning_rate)
@@ -720,6 +774,7 @@ class Transformer:
                 probabilities = softmax(last_token_logits[np.newaxis, :])[0]
                 
                 # Get top beam_width candidates for the next token
+                # Ensure indices are within vocab_size, which they should be if last_token_logits is vocab_size long
                 top_token_indices = np.argsort(probabilities)[::-1][:beam_width]
 
                 for next_token_id in top_token_indices:
@@ -744,7 +799,7 @@ class Transformer:
         Generates new tokens based on a prompt using various sampling strategies.
         prompt_tokens: (1, seq_len) - initial token IDs.
         max_new_tokens: int - maximum number of tokens to generate.
-        temperature: float - controls randomness in sampling. Higher means more random.
+        temperature: float - controls randomness. Higher means more random.
         repetition_penalty: float - penalizes tokens that have already appeared. > 1.0 to penalize.
         pad_token_id: int - ID of the padding token.
         eos_token_id: int - ID of the end-of-sequence token.
@@ -783,7 +838,7 @@ class Transformer:
                         last_token_logits[token_id] /= repetition_penalty
 
             # Sample next token using top-k and top-p
-            next_token = _top_k_top_p_sampling(last_token_logits, top_k, top_p, temperature)
+            next_token = _top_k_top_p_sampling(last_token_logits, self.vocab_size, top_k, top_p, temperature)
             
             generated_tokens.append(next_token)
 

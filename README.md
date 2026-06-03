@@ -11,9 +11,10 @@ The core of Atlas is a Transformer neural network, implemented without any exter
 -   **Multi-Head Self-Attention**: To weigh the importance of different words in a sentence, now with **dropout** for regularization.
 -   **Feed-Forward Networks**: For processing information, also with **dropout**.
 -   **Layer Normalization and Residual Connections**: For stable training.
--   **Label Smoothing Cross-Entropy**: A more robust loss function for training.
+-   **Label Smoothing Cross-Entropy with Padding Mask**: A more robust loss function that ignores padding tokens.
+-   **Xavier/Glorot Initialization**: For more stable weight initialization.
 
-The model's capacity has been scaled up with increased `embed_dim`, `num_heads`, `ff_dim`, `num_layers`, and `max_seq_len` for more coherent responses. The vocabulary grows dynamically as new words are encountered, and the model's parameters are saved and loaded to retain its "memory" across sessions.
+The model's capacity has been adjusted to smaller, more stable values (`embed_dim=32`, `num_heads=2`, `ff_dim=64`, `num_layers=2`) to prevent model collapse and improve training stability. The vocabulary grows dynamically as new words are encountered, and the model's parameters are saved and loaded to retain its "memory" across sessions.
 
 ## Features
 
@@ -26,6 +27,7 @@ The model's capacity has been scaled up with increased `embed_dim`, `num_heads`,
     -   **Beam Search**: An optional strategy for finding the most probable sequence of words.
     -   **Temperature and Repetition Penalty**: Controls randomness and discourages repetitive phrases.
 -   **Dropout Regularization**: Improves generalization and prevents overfitting.
+-   **Robustness**: Includes checks for NaN/Inf weights and empty responses.
 -   **Minimal Dependencies**: Built primarily with Python's standard library and NumPy.
 
 ## Getting Started
@@ -90,11 +92,25 @@ This continuous learning process allows Atlas to adapt to your conversational st
 -   `README.md`: This file.
 -   `tests/`: Unit tests for the components.
 
+## Known Limitations
+
+-   **Small Model Size**: Due to its small size, Atlas may produce repetitive or less coherent responses compared to larger, pre-trained models. For better quality, training with a much larger dataset and a more powerful model would be necessary.
+-   **Limited Context**: `max_seq_len` is set to 50, meaning it can only consider a short window of past tokens.
+-   **Computational Cost**: Training is done on the CPU using NumPy, which is slower than GPU-accelerated frameworks.
+
+## Troubleshooting
+
+-   **Atlas stops responding or gives strange output**: This can happen if the model's weights become corrupted (e.g., due to NaN/Inf values during training). To reset Atlas, delete the `atlas_model.npz` and `atlas_vocab.pkl` files in the project root. Atlas will then start learning from scratch.
+
 ## Future Enhancements
 
 -   More sophisticated tokenization (e.g., BPE).
 -   Integration with a GUI or web interface.
 
-## Contributing
+## License
 
-Contributions are welcome! Please feel free to open issues or submit pull requests.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Educational Project
+
+This project is intended for educational purposes to demonstrate the implementation of a Transformer model and its application in a conversational AI from first principles using NumPy. It serves as a learning resource for understanding the internal workings of such models.

@@ -32,12 +32,12 @@ class AtlasBrain:
         for token in self.SPECIAL_TOKENS:
             self._add_word_to_vocab(token)
 
-        # Transformer hyperparameters
-        self.embed_dim = 64
-        self.num_heads = 4
-        self.ff_dim = 128
-        self.num_layers = 4
-        self.max_seq_len = 100
+        # Transformer hyperparameters (reduced for stability)
+        self.embed_dim = 32
+        self.num_heads = 2
+        self.ff_dim = 64
+        self.num_layers = 2
+        self.max_seq_len = 50 # Reduced max_seq_len
         self.learning_rate = 0.005
         self.dropout_rate = 0.1
         self.repetition_penalty = 1.2  # A small penalty to discourage immediate repetition
@@ -55,6 +55,9 @@ class AtlasBrain:
         self.interaction_count = 0
         self.lr_decay_rate = 0.95
         self.lr_decay_steps = 100
+
+        # NaN check frequency
+        self.nan_check_interval = 10 # Check every 10 interactions
 
         # Initialize Transformer with current vocab_size
         self.transformer = Transformer(
@@ -127,6 +130,10 @@ class AtlasBrain:
         """
         full_sequence_ids = [self.BOS_TOKEN_ID] + text_ids + [self.EOS_TOKEN_ID]
 
+        # Skip if sequence is only special tokens (length <= 2 after BOS/EOS)
+        if len(full_sequence_ids) <= len(self.SPECIAL_TOKENS) - 2: # BOS, EOS, and potentially PAD/UNK
+             return None, None
+
         if len(full_sequence_ids) > self.max_seq_len:
             full_sequence_ids = full_sequence_ids[len(full_sequence_ids) - self.max_seq_len:]
 
@@ -140,6 +147,35 @@ class AtlasBrain:
         target_ids_padded[:len(target_ids)] = target_ids
 
         return np.array([input_ids_padded]), np.array([target_ids_padded])
+
+    def _check_weights_for_nan(self):
+        """
+        Scans transformer parameters for NaN/inf and reinitializes if found.
+        """
+        nan_found = False
+        for name, param in self.transformer.params.items():
+            if np.any(np.isnan(param)) or np.any(np.isinf(param)):
+                print(f"WARNING: NaN or Inf found in parameter: {name}. Reinitializing model.")
+                nan_found = True
+                break
+        
+        if nan_found:
+            # Reinitialize the entire transformer
+            self.transformer = Transformer(
+                vocab_size=self.vocab_size,
+                embed_dim=self.embed_dim,
+                num_heads=self.num_heads,
+                ff_dim=self.ff_dim,
+                num_layers=self.num_layers,
+                max_seq_len=self.max_seq_len,
+                dropout_rate=self.dropout_rate
+            )
+            # Ensure vocab size is updated for the new transformer
+            self.transformer.update_vocab_size(self.vocab_size)
+            print("Model reinitialized due to NaN/Inf weights.")
+            return True
+        return False
+
 
     def learn(self, user_message):
         """
@@ -155,28 +191,42 @@ class AtlasBrain:
 
         user_ids = self._words_to_ids(user_tokens)
 
-        # Add to replay buffer
         input_batch, target_batch = self._prepare_sequence_for_training(user_ids)
+        
+        # Skip training if the sequence is only special tokens
+        if input_batch is None or target_batch is None:
+            print("Skipping training: input sequence contains only special tokens.")
+            return None
+
+        # Add to replay buffer
         if len(self.replay_buffer) >= self.replay_buffer_size:
             self.replay_buffer.pop(0)  # Remove oldest
         self.replay_buffer.append((input_batch, target_batch))
 
         # Train on current user message
-        loss = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True)
+        loss = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
 
         # Occasionally sample from replay buffer for additional training
         if self.replay_buffer and random.random() < self.replay_sample_rate:
             replay_input, replay_target = random.choice(self.replay_buffer)
-            replay_loss = self.transformer.train_step(replay_input, replay_target, current_learning_rate, training=True)
-            # print(f"Replay loss: {replay_loss:.4f}")
+            replay_loss = self.transformer.train_step(replay_input, replay_target, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
+            # if replay_loss is not None:
+            #     print(f"Replay loss: {replay_loss:.4f}")
 
-        # print(f"Learning loss: {loss:.4f}, Current LR: {current_learning_rate:.6f}")
+        # Check for NaN/inf weights occasionally
+        if self.interaction_count % self.nan_check_interval == 0:
+            self._check_weights_for_nan()
+
+        # if loss is not None:
+        #     print(f"Learning loss: {loss:.4f}, Current LR: {current_learning_rate:.6f}")
         return loss
 
     def respond(self, prompt=None):
         """
         Generates a response based on an optional prompt, incorporating conversation history.
         """
+        default_message = "I'm still learning... Could you say that differently?"
+
         if self.vocab_size <= len(self.SPECIAL_TOKENS):  # Only special tokens in vocab
             return "I'm learning to speak... please teach me more!"
 
@@ -200,7 +250,7 @@ class AtlasBrain:
 
         prompt_tensor = np.array([current_input_ids])
 
-        generated_ids = self.transformer.generate(
+        response_tokens_ids = self.transformer.generate(
             prompt_tensor,
             max_new_tokens=20, # Increased max_new_tokens for potentially longer responses
             temperature=0.8,
@@ -218,15 +268,16 @@ class AtlasBrain:
         # The generated_ids will include the prompt_tensor, so we need to slice it
         start_idx = len(current_input_ids)
 
-        for token_id in generated_ids[start_idx:]:
+        # Filter out special tokens and collect actual response tokens
+        for token_id in response_tokens_ids[start_idx:]:
             if token_id == self.EOS_TOKEN_ID:
                 break
             if token_id not in [self.PAD_TOKEN_ID, self.UNK_TOKEN_ID, self.BOS_TOKEN_ID]:
                 response_tokens.append(self.idx_to_word.get(token_id, "<UNK>"))
 
-        atlas_response = " ".join(response_tokens)
+        atlas_response = " ".join(response_tokens).strip()
 
-        # Update conversation history
+        # Always update conversation history, even if the response is empty
         if prompt:
             # Store the user's actual prompt (not including history context)
             user_hist_ids = self._words_to_ids(self._tokenize(prompt))
@@ -238,6 +289,10 @@ class AtlasBrain:
         self.conversation_history.append((user_hist_ids, atlas_hist_ids))
         if len(self.conversation_history) > self.max_history_length:
             self.conversation_history.pop(0) # Remove oldest exchange
+
+        # Now check for empty response and return default message if needed
+        if not atlas_response:
+            return default_message
 
         return atlas_response
 
@@ -257,7 +312,20 @@ class AtlasBrain:
             'conversation_history': self.conversation_history,
             'replay_buffer': self.replay_buffer,
             'interaction_count': self.interaction_count,
-            'learning_rate': self.learning_rate # Save base LR, decay is calculated
+            'learning_rate': self.learning_rate, # Save base LR, decay is calculated
+            'embed_dim': self.embed_dim, # Save hyperparameters
+            'num_heads': self.num_heads,
+            'ff_dim': self.ff_dim,
+            'num_layers': self.num_layers,
+            'max_seq_len': self.max_seq_len,
+            'dropout_rate': self.dropout_rate,
+            'repetition_penalty': self.repetition_penalty,
+            'max_history_length': self.max_history_length,
+            'replay_buffer_size': self.replay_buffer_size,
+            'replay_sample_rate': self.replay_sample_rate,
+            'lr_decay_rate': self.lr_decay_rate,
+            'lr_decay_steps': self.lr_decay_steps,
+            'nan_check_interval': self.nan_check_interval,
         }
         with open(self.vocab_path, 'wb') as f:
             pickle.dump(brain_state, f)
@@ -280,7 +348,33 @@ class AtlasBrain:
                 self.interaction_count = brain_state.get('interaction_count', 0)
                 self.learning_rate = brain_state.get('learning_rate', self.learning_rate) # Load if exists, else keep default
 
-            # Update transformer's vocab size before loading weights
+                # Load hyperparameters, falling back to defaults if not present in old saves
+                self.embed_dim = brain_state.get('embed_dim', self.embed_dim)
+                self.num_heads = brain_state.get('num_heads', self.num_heads)
+                self.ff_dim = brain_state.get('ff_dim', self.ff_dim)
+                self.num_layers = brain_state.get('num_layers', self.num_layers)
+                self.max_seq_len = brain_state.get('max_seq_len', self.max_seq_len)
+                self.dropout_rate = brain_state.get('dropout_rate', self.dropout_rate)
+                self.repetition_penalty = brain_state.get('repetition_penalty', self.repetition_penalty)
+                self.max_history_length = brain_state.get('max_history_length', self.max_history_length)
+                self.replay_buffer_size = brain_state.get('replay_buffer_size', self.replay_buffer_size)
+                self.replay_sample_rate = brain_state.get('replay_sample_rate', self.replay_sample_rate)
+                self.lr_decay_rate = brain_state.get('lr_decay_rate', self.lr_decay_rate)
+                self.lr_decay_steps = brain_state.get('lr_decay_steps', self.lr_decay_steps)
+                self.nan_check_interval = brain_state.get('nan_check_interval', self.nan_check_interval)
+
+
+            # Re-initialize transformer with loaded hyperparameters
+            self.transformer = Transformer(
+                vocab_size=self.vocab_size,
+                embed_dim=self.embed_dim,
+                num_heads=self.num_heads,
+                ff_dim=self.ff_dim,
+                num_layers=self.num_layers,
+                max_seq_len=self.max_seq_len,
+                dropout_rate=self.dropout_rate
+            )
+            # Update transformer's vocab size after re-initialization
             self.transformer.update_vocab_size(self.vocab_size)
 
             # Load transformer parameters
@@ -288,7 +382,12 @@ class AtlasBrain:
             for k, v in loaded_params.items():
                 # Direct assignment for top-level params
                 if k in self.transformer.params:
-                    self.transformer.params[k][:] = v  # Use [:] to modify in-place
+                    # Ensure shapes match before assignment, especially if hyperparameters changed
+                    if self.transformer.params[k].shape == v.shape:
+                        self.transformer.params[k][:] = v  # Use [:] to modify in-place
+                    else:
+                        print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter. "
+                              f"Expected {self.transformer.params[k].shape}, got {v.shape}.")
 
                 # Handle nested parameters for blocks, attention, and feed_forward
                 for i, block in enumerate(self.transformer.transformer_blocks):
@@ -296,15 +395,24 @@ class AtlasBrain:
                         if k.startswith(f'block_{i}_attn_'):
                             attn_param_name = k[len(f'block_{i}_attn_'):]
                             if attn_param_name in block.attention.params:
-                                block.attention.params[attn_param_name][:] = v
+                                if block.attention.params[attn_param_name].shape == v.shape:
+                                    block.attention.params[attn_param_name][:] = v
+                                else:
+                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
                         elif k.startswith(f'block_{i}_ff_'):
                             ff_param_name = k[len(f'block_{i}_ff_'):]
                             if ff_param_name in block.feed_forward.params:
-                                block.feed_forward.params[ff_param_name][:] = v
+                                if block.feed_forward.params[ff_param_name].shape == v.shape:
+                                    block.feed_forward.params[ff_param_name][:] = v
+                                else:
+                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
                         else:  # Block's own parameters (e.g., layer norm gamma/beta)
                             block_param_name = k[len(f'block_{i}_'):]
                             if block_param_name in block.params:
-                                block.params[block_param_name][:] = v
+                                if block.params[block_param_name].shape == v.shape:
+                                    block.params[block_param_name][:] = v
+                                else:
+                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
             # print(f"Model and brain state loaded from {self.model_path} and {self.vocab_path}")
         else:
             print("No saved model or vocabulary found. Starting with a fresh model.")

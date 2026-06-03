@@ -29,12 +29,12 @@ def test_brain_initialization():
     assert brain.transformer is not None
     assert brain.transformer.vocab_size == brain.vocab_size
 
-    # Assert new hyperparameters
-    assert brain.embed_dim == 64
-    assert brain.num_heads == 4
-    assert brain.ff_dim == 128
-    assert brain.num_layers == 4
-    assert brain.max_seq_len == 100
+    # Assert new hyperparameters (updated to match atlas/brain.py)
+    assert brain.embed_dim == 32
+    assert brain.num_heads == 2
+    assert brain.ff_dim == 64
+    assert brain.num_layers == 2
+    assert brain.max_seq_len == 50
     assert brain.learning_rate == 0.005
     assert brain.dropout_rate == 0.1
     assert brain.transformer.dropout_rate == 0.1 # Ensure transformer also gets it
@@ -241,26 +241,29 @@ def test_conversation_history_truncation():
     user_msg_1 = "user message 1"
     brain.learn(user_msg_1)
     generated_resp_1 = brain.respond(user_msg_1) # This populates history with (user_msg_1, generated_resp_1)
+    user_ids_1 = brain._words_to_ids(brain._tokenize(user_msg_1))
 
     user_msg_2 = "user message 2"
     brain.learn(user_msg_2)
     generated_resp_2 = brain.respond(user_msg_2) # This populates history with (user_msg_2, generated_resp_2)
+    user_ids_2 = brain._words_to_ids(brain._tokenize(user_msg_2))
 
     user_msg_3 = "user message 3"
     brain.learn(user_msg_3)
     generated_resp_3 = brain.respond(user_msg_3) # This populates history with (user_msg_3, generated_resp_3)
+    user_ids_3 = brain._words_to_ids(brain._tokenize(user_msg_3))
 
     assert len(brain.conversation_history) == 2
     
     # Check if the oldest entry was removed and the correct ones are present
     # The first entry in history should be (user_msg_2, generated_resp_2)
     user_hist_ids_0, atlas_hist_ids_0 = brain.conversation_history[0]
-    assert brain._detokenize(user_hist_ids_0) == user_msg_2
+    assert user_hist_ids_0 == user_ids_2 # Compare token ID lists directly
     assert brain._detokenize(atlas_hist_ids_0) == generated_resp_2
 
     # The second entry in history should be (user_msg_3, generated_resp_3)
     user_hist_ids_1, atlas_hist_ids_1 = brain.conversation_history[1]
-    assert brain._detokenize(user_hist_ids_1) == user_msg_3
+    assert user_hist_ids_1 == user_ids_3 # Compare token ID lists directly
     assert brain._detokenize(atlas_hist_ids_1) == generated_resp_3
 
 

@@ -55,7 +55,13 @@ def main():
                 break
             
             brain.learn(user_input)
-            response = brain.respond(prompt=user_input)
+            
+            try:
+                response = brain.respond(prompt=user_input)
+            except Exception as e:
+                print(f"Atlas: An error occurred while generating a response: {e}")
+                response = "I'm having trouble responding right now, please try again."
+            
             print(f"Atlas: {response}")
 
             interaction_count += 1

@@ -253,6 +253,15 @@ def test_transformer_generate_returns_tokens():
     assert len(generated_tokens) > 0
     assert all(isinstance(t, (int, np.integer)) for t in generated_tokens)
 
+def test_generate_non_empty():
+    transformer = _create_dummy_transformer()
+    prompt_tokens = np.array([[AtlasBrain.BOS_TOKEN_ID]])
+    generated_tokens = transformer.generate(prompt_tokens, max_new_tokens=1, eos_token_id=AtlasBrain.EOS_TOKEN_ID)
+    # The generated sequence should always contain at least the prompt token(s)
+    # and potentially one new token before EOS.
+    assert len(generated_tokens) >= len(prompt_tokens[0])
+    assert generated_tokens[0] == AtlasBrain.BOS_TOKEN_ID
+
 
 def test_transformer_learning_reduces_loss():
     vocab_size = 10
@@ -350,12 +359,13 @@ def test_top_k_top_p_sampling():
     np.random.seed(42) # For reproducibility
 
     logits = np.array([1.0, 2.0, 3.0, 0.5, 0.1]) # vocab_size = 5
+    vocab_size = 5
     temperature = 1.0
 
     # Test top-k only (k=3)
     # Top 3 logits: 3.0, 2.0, 1.0 (indices 2, 1, 0)
     # Others should be -inf
-    sampled_token_k = _top_k_top_p_sampling(logits, top_k=3, top_p=1.0, temperature=temperature)
+    sampled_token_k = _top_k_top_p_sampling(logits, vocab_size, top_k=3, top_p=1.0, temperature=temperature)
     assert sampled_token_k in [0, 1, 2]
 
     # Test top-p only (p=0.8)
@@ -373,7 +383,7 @@ def test_top_k_top_p_sampling():
     # cutoff_idx = np.where(cumulative_probabilities > 0.8)[0][0] = 1
     # indices_to_remove = sorted_indices[1:] = [1, 0, 3, 4]
     # So only index 2 should remain.
-    sampled_token_p = _top_k_top_p_sampling(logits, top_k=0, top_p=0.8, temperature=temperature)
+    sampled_token_p = _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=0.8, temperature=temperature)
     assert sampled_token_p == 2 # Index 2 has the highest probability and is within p=0.8
 
     # Test combined top-k (k=3) and top-p (p=0.8)
@@ -382,16 +392,16 @@ def test_top_k_top_p_sampling():
     # Sorted probs: [0.788 (idx 2), 0.289 (idx 1), 0.064 (idx 3)]
     # Cumulative: [0.788, 1.077, ...]
     # Cutoff for p=0.8 is still at index 1 of sorted list, so only index 2 remains.
-    sampled_token_kp = _top_k_top_p_sampling(logits, top_k=3, top_p=0.8, temperature=temperature)
+    sampled_token_kp = _top_k_top_p_sampling(logits, vocab_size, top_k=3, top_p=0.8, temperature=temperature)
     assert sampled_token_kp == 2
 
     # Test with very low temperature (should pick highest logit)
-    sampled_token_low_temp = _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=0.01)
+    sampled_token_low_temp = _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=0.01)
     assert sampled_token_low_temp == 2 # Index 2 has logit 3.0, highest
 
     # Test with high temperature (more uniform sampling)
     # This is hard to assert deterministically, just ensure it runs
-    sampled_token_high_temp = _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=100.0)
+    sampled_token_high_temp = _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=100.0)
     assert sampled_token_high_temp in [0, 1, 2, 3, 4]
 
 def test_transformer_generate_beam_search():
