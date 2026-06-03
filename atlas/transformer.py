@@ -500,6 +500,10 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
     temperature: float - controls randomness.
     Returns: int - sampled token ID.
     """
+    # Handle very low temperature for deterministic greedy behavior
+    if temperature <= 0.01: # A very small epsilon
+        return np.argmax(logits)
+
     # Apply temperature
     logits = logits / temperature
 
