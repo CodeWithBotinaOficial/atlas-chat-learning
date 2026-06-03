@@ -1,3 +1,5 @@
+[![CI](https://github.com/CodeWithBotinaOficial/atlas-chat-learning/actions/workflows/test.yml/badge.svg)](https://github.com/CodeWithBotinaOficial/atlas-chat-learning/actions/workflows/test.yml)
+
 # Atlas: A Tiny Transformer Chatbot
 
 Atlas is a conversational AI designed to learn and adapt through interaction. This version of Atlas features an **enhanced Transformer model built from scratch using only NumPy**, demonstrating online learning capabilities with advanced generation strategies and conversational memory.
@@ -75,7 +77,18 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
     python main.py --production
     ```
 
-### Running Tests
+## Pre-trained Model (Optional)
+
+You can download pre-trained model files (`atlas_model.npz` and `atlas_vocab.pkl`) from the [Releases](https://github.com/CodeWithBotinaOficial/atlas-chat-learning/releases) page.
+
+To use the pre-trained model:
+1.  Download both `atlas_model.npz` and `atlas_vocab.pkl` from the latest release.
+2.  Place both files in the root directory of this project.
+3.  Run `python main.py` to start chatting with the pre-trained model.
+
+**Note:** The pre-trained model has been lightly trained on sample conversations. For better and more robust results, it is highly recommended to train your own model with `python main.py --training` using a larger and more diverse text corpus relevant to your application.
+
+## Testing
 
 To run the unit tests and ensure everything is working correctly:
 
