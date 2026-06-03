@@ -8,6 +8,28 @@ n-gram based learning and persistent memory.
 
 from atlas.brain import AtlasBrain
 import sys
+import os
+
+# --- Readline setup for command history and arrow key navigation ---
+try:
+    import readline
+    import atexit
+
+    histfile = os.path.expanduser("~/.atlas_history")
+    try:
+        readline.read_history_file(histfile)
+    except FileNotFoundError:
+        pass
+    # Set history length to avoid unlimited growth
+    readline.set_history_length(1000)
+    atexit.register(readline.write_history_file, histfile)
+    print("Readline enabled for command history and editing.")
+except ImportError:
+    print("Readline module not available (likely on Windows). Command history and arrow keys will not work.")
+except Exception as e:
+    print(f"An error occurred while setting up readline: {e}. Command history and arrow keys may not work.")
+# --- End Readline setup ---
+
 
 def main():
     """

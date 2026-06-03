@@ -28,6 +28,7 @@ To start an interactive session with Atlas, run the `main.py` script:
 ```bash
 python main.py
 ```
+During the interactive session, you can use the **Up/Down arrow keys** to navigate through command history and **Left/Right arrow keys** to edit the current input line. Atlas's memory (`atlas_memory.pkl`) will be automatically saved every 5 interactions and upon exiting the program.
 
 ### Basic Usage Example
 
@@ -53,6 +54,7 @@ The project is organized as follows:
 │   ├── __init__.py         # Makes 'atlas' a Python package
 │   └── brain.py            # Contains the core learning and response logic (AtlasBrain)
 ├── tests/                  # Unit tests for the project
+│   ├── conftest.py         # Pytest configuration to ensure correct module imports
 │   └── test_brain.py       # Tests for the AtlasBrain module
 ├── main.py                 # Main entry point for the application
 ├── requirements.txt        # Lists project dependencies
@@ -80,8 +82,8 @@ To run the unit tests for Atlas, first ensure you have the development dependenc
 pip install -r requirements.txt
 ```
 
-Then, navigate to the project root and run pytest:
+Then, navigate to the project root and run pytest. It's recommended to run it as a module to ensure correct path resolution:
 
 ```bash
-pytest
+python -m pytest
 ```
