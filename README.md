@@ -25,6 +25,7 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 -   **Dynamic Vocabulary**: Adapts to new words.
 -   **Persistent Memory**: Saves and loads its learned weights and vocabulary.
 -   **Short-Term Conversation Memory**: Maintains a buffer of recent exchanges to provide context-aware responses.
+-   **Grammatical Post-Processing**: Responses are now automatically corrected for basic grammar, including capitalization, punctuation, and removal of excessive word repetition, to enhance readability and structure.
 -   **Advanced Generation Strategies**:
     -   **Top-K and Top-P (Nucleus) Sampling**: For more diverse and coherent text generation.
     -   **Beam Search**: An optional strategy for finding the most probable sequence of words.
@@ -120,6 +121,7 @@ This continuous learning process allows Atlas to adapt to your conversational st
 -   `atlas/`: Contains the core logic.
     -   `brain.py`: Manages the chatbot's overall logic, including tokenization, vocabulary management, conversation history, replay buffer, and orchestrating the Transformer.
     -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
+    -   `grammar.py`: Contains the `GrammarHelper` class for post-processing generated responses to improve readability and structure.
 -   `requirements.txt`: Lists Python dependencies.
 -   `README.md`: This file.
 -   `tests/`: Unit tests for the components.
@@ -128,6 +130,7 @@ This continuous learning process allows Atlas to adapt to your conversational st
 
 -   **Small Model Size**: Due to its small size, Atlas may produce repetitive or less coherent responses compared to larger, pre-trained models. For better quality, training with a much larger dataset and a more powerful model would be necessary.
 -   **Limited Context**: `max_seq_len` is set to 50, meaning it can only consider a short window of past tokens.
+-   **Grammar Post-Processing**: While improving readability, the rule-based grammar corrections do not make the underlying model smarter or improve its semantic understanding. They are purely for presentational enhancement.
 -   **Computational Cost**: Training is done on the CPU using NumPy, which is slower than GPU-accelerated frameworks.
 
 ## Performance Requirements

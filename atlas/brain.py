@@ -7,6 +7,7 @@ import os
 import random
 
 from atlas.transformer import Transformer, softmax, label_smoothing_loss
+from atlas.grammar import GrammarHelper # Import GrammarHelper
 
 
 class AtlasBrain:
@@ -229,7 +230,7 @@ class AtlasBrain:
         Generates a response based on an optional prompt, incorporating conversation history.
         """
         default_message_learning = "I'm learning to speak... please teach me more!"
-        default_message_not_sure = "I'm not sure how to answer that."
+        # The default_message_not_sure will now be handled by GrammarHelper's fallbacks
 
         if self.vocab_size <= len(self.SPECIAL_TOKENS):  # Only special tokens in vocab
             return default_message_learning
@@ -279,26 +280,26 @@ class AtlasBrain:
             if token_id not in [self.PAD_TOKEN_ID, self.UNK_TOKEN_ID, self.BOS_TOKEN_ID]:
                 response_tokens.append(self.idx_to_word.get(token_id, "<UNK>"))
 
-        atlas_response = " ".join(response_tokens).strip()
+        raw_atlas_response = " ".join(response_tokens).strip()
 
-        # Always update conversation history, even if the response is empty
+        # Apply grammatical post-processing
+        # Pass the original prompt as previous_user_message to GrammarHelper
+        corrected_atlas_response = GrammarHelper.apply_all(raw_atlas_response, prompt)
+        
+        # Update conversation history with the grammatically corrected version
         if prompt:
-            # Store the user's actual prompt (not including history context)
             user_hist_ids = self._words_to_ids(self._tokenize(prompt))
         else:
-            user_hist_ids = [] # If no prompt, user just initiated conversation
+            user_hist_ids = []
 
-        atlas_hist_ids = [self.word_to_idx.get(word, self.UNK_TOKEN_ID) for word in response_tokens]
+        # Tokenize the corrected_atlas_response for history storage
+        atlas_hist_ids = self._words_to_ids(self._tokenize(corrected_atlas_response))
 
         self.conversation_history.append((user_hist_ids, atlas_hist_ids))
         if len(self.conversation_history) > self.max_history_length:
-            self.conversation_history.pop(0) # Remove oldest exchange
+            self.conversation_history.pop(0)
 
-        # Now check for empty response and return default message if needed
-        if not atlas_response:
-            return default_message_not_sure
-
-        return atlas_response
+        return corrected_atlas_response
 
     def save(self):
         """
