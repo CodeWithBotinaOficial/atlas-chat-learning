@@ -71,3 +71,17 @@ Atlas learns incrementally from your conversations using an n-gram model. Specif
 When you provide input, Atlas tokenizes your text, updates the frequencies of these n-grams, and expands its vocabulary. When generating a response, it tries to predict the next word based on the preceding one or two words, choosing from learned patterns with higher frequency.
 
 The more you interact with Atlas, the larger its vocabulary and n-gram knowledge base become, leading to more varied and "intelligent" responses over time. Its memory is saved to `atlas_memory.pkl` to ensure persistence across sessions.
+
+## Testing
+
+To run the unit tests for Atlas, first ensure you have the development dependencies installed:
+
+```bash
+pip install -r requirements.txt
+```
+
+Then, navigate to the project root and run pytest:
+
+```bash
+pytest
+```
