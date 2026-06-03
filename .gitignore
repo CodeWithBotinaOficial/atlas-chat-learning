@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 *.pyo
 *.pkl
+*.npz
 
 # IDE-specific files
 .idea/

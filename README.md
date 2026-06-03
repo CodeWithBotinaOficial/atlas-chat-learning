@@ -48,6 +48,14 @@ To start chatting with Atlas, run the `main.py` script:
 python main.py
 ```
 
+### Running Tests
+
+To run the unit tests and ensure everything is working correctly:
+
+```bash
+python -m pytest
+```
+
 ### Interacting with Atlas
 
 -   Type your messages at the `You: ` prompt.

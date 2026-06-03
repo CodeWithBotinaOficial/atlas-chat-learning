@@ -203,7 +203,8 @@ class MultiHeadSelfAttention:
         # dL/d_attention_weights = d_attention_output_heads @ V_heads.T
         d_V_heads = np.einsum('bhls,bhld->bhsd', attention_weights.transpose(0, 1, 3, 2),
                               d_attention_output_heads)  # (batch_size, num_heads, seq_len, head_dim)
-        d_attention_weights = np.einsum('bhld,bhsd->bhls', d_attention_output_heads,
+        # FIX: Changed einsum string from 'bhld,bhsd->bhls' to 'bhld,bhds->bhls'
+        d_attention_weights = np.einsum('bhld,bhds->bhls', d_attention_output_heads,
                                         V_heads.transpose(0, 1, 3, 2))  # (batch_size, num_heads, seq_len, seq_len)
 
         # Correct softmax backward
@@ -212,6 +213,8 @@ class MultiHeadSelfAttention:
                     d_attention_weights - np.sum(d_attention_weights * attention_weights, axis=-1, keepdims=True))
 
         if mask is not None:
+            # FIX: Broadcast mask to d_attention_scores shape before applying
+            mask = np.broadcast_to(mask, d_attention_scores.shape)
             # Mask out gradients where attention scores were masked
             d_attention_scores[mask == -np.inf] = 0
 
