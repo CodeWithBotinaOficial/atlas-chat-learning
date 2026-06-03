@@ -4,8 +4,9 @@ import pickle
 import re
 from collections import defaultdict
 import os
+import random
 
-from atlas.transformer import Transformer, cross_entropy_loss, softmax
+from atlas.transformer import Transformer, softmax, label_smoothing_loss
 
 
 class AtlasBrain:
@@ -32,13 +33,28 @@ class AtlasBrain:
             self._add_word_to_vocab(token)
 
         # Transformer hyperparameters
-        self.embed_dim = 16
-        self.num_heads = 2
-        self.ff_dim = 32
-        self.num_layers = 2
-        self.max_seq_len = 50
-        self.learning_rate = 0.01
+        self.embed_dim = 64
+        self.num_heads = 4
+        self.ff_dim = 128
+        self.num_layers = 4
+        self.max_seq_len = 100
+        self.learning_rate = 0.005
+        self.dropout_rate = 0.1
         self.repetition_penalty = 1.2  # A small penalty to discourage immediate repetition
+
+        # Conversation history buffer
+        self.conversation_history = []  # Stores (user_message_ids, atlas_response_ids)
+        self.max_history_length = 5  # Keep last 5 exchanges
+
+        # Replay buffer for incremental learning
+        self.replay_buffer = []  # Stores (input_ids, target_ids) for past user messages
+        self.replay_buffer_size = 10
+        self.replay_sample_rate = 0.3  # Probability of sampling from replay buffer
+
+        # Learning rate decay
+        self.interaction_count = 0
+        self.lr_decay_rate = 0.95
+        self.lr_decay_steps = 100
 
         # Initialize Transformer with current vocab_size
         self.transformer = Transformer(
@@ -47,7 +63,8 @@ class AtlasBrain:
             num_heads=self.num_heads,
             ff_dim=self.ff_dim,
             num_layers=self.num_layers,
-            max_seq_len=self.max_seq_len
+            max_seq_len=self.max_seq_len,
+            dropout_rate=self.dropout_rate
         )
 
         self.load()  # Attempt to load existing model and vocab
@@ -103,120 +120,167 @@ class AtlasBrain:
         """
         return [self.idx_to_word.get(idx, "<UNK>") for idx in ids]
 
-    def learn(self, text):
+    def _prepare_sequence_for_training(self, text_ids):
         """
-        Processes input text, updates vocabulary, and performs one training step
-        on the Transformer model.
+        Prepares a sequence of token IDs for transformer training.
+        Adds BOS/EOS, truncates, and pads.
         """
-        tokens = self._tokenize(text)
-        if not tokens:
-            return None
+        full_sequence_ids = [self.BOS_TOKEN_ID] + text_ids + [self.EOS_TOKEN_ID]
 
-        # Add BOS and EOS tokens for training sequence
-        # The model learns to predict the next token given the previous ones.
-        # So, input sequence will be <BOS> token1 token2 ... tokenN
-        # And target sequence will be token1 token2 ... tokenN <EOS>
-        full_sequence_ids = [self.BOS_TOKEN_ID] + self._words_to_ids(tokens) + [self.EOS_TOKEN_ID]
-
-        # Truncate sequence if too long, keeping the most recent tokens
         if len(full_sequence_ids) > self.max_seq_len:
             full_sequence_ids = full_sequence_ids[len(full_sequence_ids) - self.max_seq_len:]
 
-        # Prepare input and target for transformer
-        # Input: all tokens except the last one
-        # Target: all tokens except the first one
         input_ids = full_sequence_ids[:-1]
         target_ids = full_sequence_ids[1:]
 
-        # Pad sequences to max_seq_len if needed
-        # This is important for consistent tensor shapes
         input_ids_padded = np.full(self.max_seq_len, self.PAD_TOKEN_ID, dtype=int)
         target_ids_padded = np.full(self.max_seq_len, self.PAD_TOKEN_ID, dtype=int)
 
         input_ids_padded[:len(input_ids)] = input_ids
         target_ids_padded[:len(target_ids)] = target_ids
 
-        # Transformer expects batch_size, seq_len
-        input_batch = np.array([input_ids_padded])
-        target_batch = np.array([target_ids_padded])
+        return np.array([input_ids_padded]), np.array([target_ids_padded])
 
-        loss = self.transformer.train_step(input_batch, target_batch, self.learning_rate)
-        # print(f"Learning loss: {loss:.4f}")
+    def learn(self, user_message):
+        """
+        Processes user input, updates vocabulary, and performs one training step
+        on the Transformer model. Also manages conversation history and replay buffer.
+        """
+        user_tokens = self._tokenize(user_message)
+        if not user_tokens:
+            return None
+        
+        self.interaction_count += 1 # Increment only for valid interactions
+        current_learning_rate = self.learning_rate * (self.lr_decay_rate ** (self.interaction_count // self.lr_decay_steps))
+
+        user_ids = self._words_to_ids(user_tokens)
+
+        # Add to replay buffer
+        input_batch, target_batch = self._prepare_sequence_for_training(user_ids)
+        if len(self.replay_buffer) >= self.replay_buffer_size:
+            self.replay_buffer.pop(0)  # Remove oldest
+        self.replay_buffer.append((input_batch, target_batch))
+
+        # Train on current user message
+        loss = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True)
+
+        # Occasionally sample from replay buffer for additional training
+        if self.replay_buffer and random.random() < self.replay_sample_rate:
+            replay_input, replay_target = random.choice(self.replay_buffer)
+            replay_loss = self.transformer.train_step(replay_input, replay_target, current_learning_rate, training=True)
+            # print(f"Replay loss: {replay_loss:.4f}")
+
+        # print(f"Learning loss: {loss:.4f}, Current LR: {current_learning_rate:.6f}")
         return loss
 
     def respond(self, prompt=None):
         """
-        Generates a response based on an optional prompt or starts from BOS.
+        Generates a response based on an optional prompt, incorporating conversation history.
         """
         if self.vocab_size <= len(self.SPECIAL_TOKENS):  # Only special tokens in vocab
             return "I'm learning to speak... please teach me more!"
 
+        # Construct context from conversation history
+        context_ids = []
+        for user_hist_ids, atlas_hist_ids in self.conversation_history:
+            context_ids.extend(user_hist_ids + [self.EOS_TOKEN_ID] + atlas_hist_ids + [self.EOS_TOKEN_ID])
+
         if prompt:
             prompt_tokens = self._tokenize(prompt)
             prompt_ids = self._words_to_ids(prompt_tokens)
-            # Start generation with BOS and prompt
-            initial_sequence = [self.BOS_TOKEN_ID] + prompt_ids
+            # Prepend BOS to the actual prompt for generation
+            current_input_ids = context_ids + [self.BOS_TOKEN_ID] + prompt_ids
         else:
-            # Start generation with BOS token
-            initial_sequence = [self.BOS_TOKEN_ID]
+            current_input_ids = context_ids + [self.BOS_TOKEN_ID]
 
         # Truncate initial sequence to fit within max_seq_len for generation
-        initial_sequence = initial_sequence[-self.max_seq_len:]
+        # Keep only the most recent tokens if too long
+        if len(current_input_ids) > self.max_seq_len - 1: # -1 to leave space for at least one generated token
+            current_input_ids = current_input_ids[len(current_input_ids) - (self.max_seq_len - 1):]
 
-        # Transformer expects batch_size, seq_len
-        prompt_tensor = np.array([initial_sequence])
+        prompt_tensor = np.array([current_input_ids])
 
         generated_ids = self.transformer.generate(
             prompt_tensor,
-            max_new_tokens=15,
+            max_new_tokens=20, # Increased max_new_tokens for potentially longer responses
             temperature=0.8,
             repetition_penalty=self.repetition_penalty,
             pad_token_id=self.PAD_TOKEN_ID,
-            eos_token_id=self.EOS_TOKEN_ID
+            eos_token_id=self.EOS_TOKEN_ID,
+            top_k=20,
+            top_p=0.9,
+            beam_width=0 # 0 means no beam search, simple sampling
         )
 
         # Decode generated tokens, stopping at EOS
         response_tokens = []
-        # Skip the initial prompt tokens if they were part of the generated_ids
-        # And skip BOS token if it's the first generated token
-        start_idx = len(initial_sequence) if prompt else 1  # If no prompt, skip BOS
+        # Find where the actual generation starts (after the prompt/context)
+        # The generated_ids will include the prompt_tensor, so we need to slice it
+        start_idx = len(current_input_ids)
 
         for token_id in generated_ids[start_idx:]:
             if token_id == self.EOS_TOKEN_ID:
                 break
-            # Only include actual words, not special tokens (except if they are part of the response)
             if token_id not in [self.PAD_TOKEN_ID, self.UNK_TOKEN_ID, self.BOS_TOKEN_ID]:
                 response_tokens.append(self.idx_to_word.get(token_id, "<UNK>"))
 
-        return " ".join(response_tokens)
+        atlas_response = " ".join(response_tokens)
+
+        # Update conversation history
+        if prompt:
+            # Store the user's actual prompt (not including history context)
+            user_hist_ids = self._words_to_ids(self._tokenize(prompt))
+        else:
+            user_hist_ids = [] # If no prompt, user just initiated conversation
+
+        atlas_hist_ids = [self.word_to_idx.get(word, self.UNK_TOKEN_ID) for word in response_tokens]
+
+        self.conversation_history.append((user_hist_ids, atlas_hist_ids))
+        if len(self.conversation_history) > self.max_history_length:
+            self.conversation_history.pop(0) # Remove oldest exchange
+
+        return atlas_response
 
     def save(self):
         """
-        Saves the Transformer model parameters and the vocabulary.
+        Saves the Transformer model parameters, vocabulary, conversation history,
+        replay buffer, and interaction count.
         """
         # Save transformer parameters
         np.savez(self.model_path, **self.transformer.params)
 
-        # Save vocabulary
+        # Save vocabulary and other brain state
+        brain_state = {
+            'word_to_idx': self.word_to_idx,
+            'idx_to_word': self.idx_to_word,
+            'vocab_size': self.vocab_size,
+            'conversation_history': self.conversation_history,
+            'replay_buffer': self.replay_buffer,
+            'interaction_count': self.interaction_count,
+            'learning_rate': self.learning_rate # Save base LR, decay is calculated
+        }
         with open(self.vocab_path, 'wb') as f:
-            pickle.dump(
-                {'word_to_idx': self.word_to_idx, 'idx_to_word': self.idx_to_word, 'vocab_size': self.vocab_size}, f)
-        # print(f"Model and vocabulary saved to {self.model_path} and {self.vocab_path}")
+            pickle.dump(brain_state, f)
+        # print(f"Model and brain state saved to {self.model_path} and {self.vocab_path}")
 
     def load(self):
         """
-        Loads the Transformer model parameters and the vocabulary from saved files.
+        Loads the Transformer model parameters, vocabulary, conversation history,
+        replay buffer, and interaction count from saved files.
         """
         if os.path.exists(self.model_path) and os.path.exists(self.vocab_path):
-            # Load vocabulary first to correctly initialize transformer's vocab_size
+            # Load brain state first to correctly initialize transformer's vocab_size
             with open(self.vocab_path, 'rb') as f:
-                vocab_data = pickle.load(f)
-                self.word_to_idx = vocab_data['word_to_idx']
-                self.idx_to_word = vocab_data['idx_to_word']
-                self.vocab_size = vocab_data['vocab_size']
+                brain_state = pickle.load(f)
+                self.word_to_idx = brain_state['word_to_idx']
+                self.idx_to_word = brain_state['idx_to_word']
+                self.vocab_size = brain_state['vocab_size']
+                self.conversation_history = brain_state.get('conversation_history', [])
+                self.replay_buffer = brain_state.get('replay_buffer', [])
+                self.interaction_count = brain_state.get('interaction_count', 0)
+                self.learning_rate = brain_state.get('learning_rate', self.learning_rate) # Load if exists, else keep default
 
             # Update transformer's vocab size before loading weights
-            # This ensures the parameter matrices are correctly sized to receive loaded weights
             self.transformer.update_vocab_size(self.vocab_size)
 
             # Load transformer parameters
@@ -241,6 +305,6 @@ class AtlasBrain:
                             block_param_name = k[len(f'block_{i}_'):]
                             if block_param_name in block.params:
                                 block.params[block_param_name][:] = v
-            # print(f"Model and vocabulary loaded from {self.model_path} and {self.vocab_path}")
+            # print(f"Model and brain state loaded from {self.model_path} and {self.vocab_path}")
         else:
             print("No saved model or vocabulary found. Starting with a fresh model.")

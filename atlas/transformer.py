@@ -9,6 +9,17 @@ def softmax(x):
     e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
     return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
+def dropout(x, dropout_rate, training):
+    """
+    Applies dropout to the input.
+    x: input array
+    dropout_rate: probability of an element being zeroed.
+    training: boolean, if True, apply dropout, else return x as is.
+    """
+    if not training or dropout_rate == 0:
+        return x
+    mask = (np.random.rand(*x.shape) > dropout_rate) / (1 - dropout_rate)
+    return x * mask
 
 def layer_norm(x, gamma, beta, epsilon=1e-5):
     """Apply layer normalization."""
@@ -30,33 +41,41 @@ def relu_backward(dA, Z):
     return dZ
 
 
-def cross_entropy_loss(predictions, targets, epsilon=1e-9):
+def label_smoothing_loss(predictions, targets, vocab_size, smoothing=0.1, epsilon=1e-9):
     """
-    Compute cross-entropy loss.
-    predictions: (batch_size * seq_len, vocab_size)
-    targets: (batch_size * seq_len,)
+    Compute cross-entropy loss with label smoothing.
+    predictions: (batch_size * seq_len, vocab_size) - softmax probabilities
+    targets: (batch_size * seq_len,) - integer class labels
+    vocab_size: int - total number of possible classes
+    smoothing: float - smoothing factor (e.g., 0.1)
     """
     # Clip predictions to avoid log(0)
     predictions = np.clip(predictions, epsilon, 1. - epsilon)
 
     # One-hot encode targets
-    num_classes = predictions.shape[-1]
-    targets_one_hot = np.eye(num_classes)[targets]
+    targets_one_hot = np.eye(vocab_size)[targets]
 
-    loss = -np.sum(targets_one_hot * np.log(predictions)) / predictions.shape[0]
+    # Apply label smoothing
+    # (1 - smoothing) * one_hot + smoothing / vocab_size
+    smoothed_targets = targets_one_hot * (1 - smoothing) + smoothing / vocab_size
+
+    loss = -np.sum(smoothed_targets * np.log(predictions)) / predictions.shape[0]
     return loss
 
 
-def cross_entropy_backward(predictions, targets):
+def label_smoothing_backward(predictions, targets, vocab_size, smoothing=0.1):
     """
-    Compute gradient of cross-entropy loss with respect to predictions.
+    Compute gradient of cross-entropy loss with label smoothing with respect to predictions.
     predictions: (batch_size * seq_len, vocab_size) - softmax probabilities
     targets: (batch_size * seq_len,) - integer class labels
+    vocab_size: int - total number of possible classes
+    smoothing: float - smoothing factor (e.g., 0.1)
     Returns: (batch_size * seq_len, vocab_size)
     """
-    num_classes = predictions.shape[-1]
-    targets_one_hot = np.eye(num_classes)[targets]
-    grad = predictions - targets_one_hot
+    targets_one_hot = np.eye(vocab_size)[targets]
+    smoothed_targets = targets_one_hot * (1 - smoothing) + smoothing / vocab_size
+
+    grad = (predictions - smoothed_targets) # This is the gradient for softmax + cross-entropy
     return grad / predictions.shape[0]  # Average over batch size
 
 
@@ -94,11 +113,12 @@ class MultiHeadSelfAttention:
     Multi-Head Self-Attention mechanism.
     """
 
-    def __init__(self, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads, dropout_rate=0.0):
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.head_dim = embed_dim // num_heads
         self.num_heads = num_heads
         self.embed_dim = embed_dim
+        self.dropout_rate = dropout_rate
 
         # Weights for Q, K, V for all heads
         self.W_q = np.random.randn(embed_dim, embed_dim) * 0.01
@@ -137,11 +157,12 @@ class MultiHeadSelfAttention:
         """
         return x.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, self.embed_dim)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, training=True):
         """
         Forward pass for Multi-Head Self-Attention.
         x: (batch_size, seq_len, embed_dim)
         mask: (1, 1, seq_len, seq_len) or None. Additive mask for attention scores.
+        training: boolean, if True, apply dropout.
         Returns: (batch_size, seq_len, embed_dim)
         """
         batch_size, seq_len, _ = x.shape
@@ -157,7 +178,6 @@ class MultiHeadSelfAttention:
         V_heads = self._split_heads(V, batch_size, seq_len)
 
         # Scaled Dot-Product Attention
-        # (batch_size, num_heads, seq_len, head_dim) @ (batch_size, num_heads, head_dim, seq_len)
         attention_scores = Q_heads @ K_heads.transpose(0, 1, 3, 2)
         attention_scores = attention_scores / math.sqrt(self.head_dim)
 
@@ -165,8 +185,8 @@ class MultiHeadSelfAttention:
             attention_scores = attention_scores + mask  # Additive mask
 
         attention_weights = softmax(attention_scores)
+        attention_weights = dropout(attention_weights, self.dropout_rate, training) # Dropout after softmax
 
-        # (batch_size, num_heads, seq_len, seq_len) @ (batch_size, num_heads, seq_len, head_dim)
         attention_output_heads = attention_weights @ V_heads
 
         # Combine heads
@@ -174,10 +194,11 @@ class MultiHeadSelfAttention:
 
         # Output projection
         output = attention_output @ self.W_o + self.b_o
+        output = dropout(output, self.dropout_rate, training) # Dropout after output projection
 
         # Save for backward pass
         self.cache = (x, Q, K, V, Q_heads, K_heads, V_heads, attention_scores, attention_weights,
-                      attention_output_heads, attention_output, mask)
+                      attention_output_heads, attention_output, mask, training)
         return output
 
     def backward(self, d_output):
@@ -186,60 +207,54 @@ class MultiHeadSelfAttention:
         d_output: (batch_size, seq_len, embed_dim) - gradient from the next layer.
         Returns: (batch_size, seq_len, embed_dim) - gradient with respect to the input x.
         """
-        x, Q, K, V, Q_heads, K_heads, V_heads, attention_scores, attention_weights, attention_output_heads, attention_output, mask = self.cache
+        x, Q, K, V, Q_heads, K_heads, V_heads, attention_scores, attention_weights, attention_output_heads, attention_output, mask, training = self.cache
         batch_size, seq_len, _ = x.shape
 
+        # Backward pass for dropout after output projection
+        if training and self.dropout_rate > 0:
+            d_output = d_output * ((np.random.rand(*d_output.shape) > self.dropout_rate) / (1 - self.dropout_rate))
+
         # Gradients for output projection
-        self.grads['W_o'] = np.einsum('bsd,bse->de', attention_output, d_output)  # (embed_dim, embed_dim)
-        self.grads['b_o'] = np.sum(d_output, axis=(0, 1))  # (embed_dim,)
-        d_attention_output = d_output @ self.W_o.T  # (batch_size, seq_len, embed_dim)
+        self.grads['W_o'] = np.einsum('bsd,bse->de', attention_output, d_output)
+        self.grads['b_o'] = np.sum(d_output, axis=(0, 1))
+        d_attention_output = d_output @ self.W_o.T
 
         # Gradients for combining heads
-        d_attention_output_heads = self._split_heads(d_attention_output, batch_size,
-                                                     seq_len)  # (batch_size, num_heads, seq_len, head_dim)
+        d_attention_output_heads = self._split_heads(d_attention_output, batch_size, seq_len)
 
         # Gradients for attention_weights and V_heads
-        # dL/dV_heads = attention_weights.T @ d_attention_output_heads
-        # dL/d_attention_weights = d_attention_output_heads @ V_heads.T
-        d_V_heads = np.einsum('bhls,bhld->bhsd', attention_weights.transpose(0, 1, 3, 2),
-                              d_attention_output_heads)  # (batch_size, num_heads, seq_len, head_dim)
-        # FIX: Changed einsum string from 'bhld,bhsd->bhls' to 'bhld,bhds->bhls'
-        d_attention_weights = np.einsum('bhld,bhds->bhls', d_attention_output_heads,
-                                        V_heads.transpose(0, 1, 3, 2))  # (batch_size, num_heads, seq_len, seq_len)
+        d_V_heads = np.einsum('bhls,bhld->bhsd', attention_weights.transpose(0, 1, 3, 2), d_attention_output_heads)
+        d_attention_weights = np.einsum('bhld,bhds->bhls', d_attention_output_heads, V_heads.transpose(0, 1, 3, 2))
+
+        # Backward pass for dropout after softmax
+        if training and self.dropout_rate > 0:
+            d_attention_weights = d_attention_weights * ((np.random.rand(*d_attention_weights.shape) > self.dropout_rate) / (1 - self.dropout_rate))
 
         # Correct softmax backward
-        # dL/d_attention_scores = attention_weights * (d_attention_weights - sum(d_attention_weights * attention_weights, axis=-1, keepdims=True))
-        d_attention_scores = attention_weights * (
-                    d_attention_weights - np.sum(d_attention_weights * attention_weights, axis=-1, keepdims=True))
+        d_attention_scores = attention_weights * (d_attention_weights - np.sum(d_attention_weights * attention_weights, axis=-1, keepdims=True))
 
         if mask is not None:
-            # FIX: Broadcast mask to d_attention_scores shape before applying
             mask = np.broadcast_to(mask, d_attention_scores.shape)
-            # Mask out gradients where attention scores were masked
             d_attention_scores[mask == -np.inf] = 0
 
         d_attention_scores = d_attention_scores / math.sqrt(self.head_dim)
 
         # Gradients for Q_heads and K_heads
-        # dL/dQ_heads = d_attention_scores @ K_heads.T
-        # dL/dK_heads = d_attention_scores.T @ Q_heads
-        d_Q_heads = np.einsum('bhls,bhsd->bhld', d_attention_scores,
-                              K_heads)  # (batch_size, num_heads, seq_len, head_dim)
-        d_K_heads = np.einsum('bhls,bhld->bhsd', d_attention_scores.transpose(0, 1, 3, 2),
-                              Q_heads)  # (batch_size, num_heads, seq_len, head_dim)
+        d_Q_heads = np.einsum('bhls,bhsd->bhld', d_attention_scores, K_heads)
+        d_K_heads = np.einsum('bhls,bhld->bhsd', d_attention_scores.transpose(0, 1, 3, 2), Q_heads)
 
         # Combine heads for Q, K, V gradients
-        d_Q = self._combine_heads(d_Q_heads, batch_size, seq_len)  # (batch_size, seq_len, embed_dim)
-        d_K = self._combine_heads(d_K_heads, batch_size, seq_len)  # (batch_size, seq_len, embed_dim)
-        d_V = self._combine_heads(d_V_heads, batch_size, seq_len)  # (batch_size, seq_len, embed_dim)
+        d_Q = self._combine_heads(d_Q_heads, batch_size, seq_len)
+        d_K = self._combine_heads(d_K_heads, batch_size, seq_len)
+        d_V = self._combine_heads(d_V_heads, batch_size, seq_len)
 
         # Gradients for linear projections W_q, b_q, W_k, b_k, W_v, b_v
-        self.grads['W_q'] = np.einsum('bsd,bse->de', x, d_Q)  # (embed_dim, embed_dim)
-        self.grads['b_q'] = np.sum(d_Q, axis=(0, 1))  # (embed_dim,)
-        self.grads['W_k'] = np.einsum('bsd,bse->de', x, d_K)  # (embed_dim, embed_dim)
-        self.grads['b_k'] = np.sum(d_K, axis=(0, 1))  # (embed_dim,)
-        self.grads['W_v'] = np.einsum('bsd,bse->de', x, d_V)  # (embed_dim, embed_dim)
-        self.grads['b_v'] = np.sum(d_V, axis=(0, 1))  # (embed_dim,)
+        self.grads['W_q'] = np.einsum('bsd,bse->de', x, d_Q)
+        self.grads['b_q'] = np.sum(d_Q, axis=(0, 1))
+        self.grads['W_k'] = np.einsum('bsd,bse->de', x, d_K)
+        self.grads['b_k'] = np.sum(d_K, axis=(0, 1))
+        self.grads['W_v'] = np.einsum('bsd,bse->de', x, d_V)
+        self.grads['b_v'] = np.sum(d_V, axis=(0, 1))
 
         # Gradient with respect to the input x
         d_x = d_Q @ self.W_q.T + d_K @ self.W_k.T + d_V @ self.W_v.T
@@ -251,11 +266,12 @@ class FeedForward:
     Position-wise Feed-Forward Network.
     """
 
-    def __init__(self, embed_dim, ff_dim):
+    def __init__(self, embed_dim, ff_dim, dropout_rate=0.0):
         self.W1 = np.random.randn(embed_dim, ff_dim) * 0.01
         self.b1 = np.zeros(ff_dim)
         self.W2 = np.random.randn(ff_dim, embed_dim) * 0.01
         self.b2 = np.zeros(embed_dim)
+        self.dropout_rate = dropout_rate
 
         self.params = {
             'W1': self.W1, 'b1': self.b1,
@@ -263,16 +279,19 @@ class FeedForward:
         }
         self.grads = {k: np.zeros_like(v) for k, v in self.params.items()}
 
-    def forward(self, x):
+    def forward(self, x, training=True):
         """
         Forward pass for Feed-Forward Network.
         x: (batch_size, seq_len, embed_dim)
+        training: boolean, if True, apply dropout.
         Returns: (batch_size, seq_len, embed_dim)
         """
         self.x = x  # Save for backward
         self.Z1 = x @ self.W1 + self.b1
         self.A1 = relu(self.Z1)
-        output = self.A1 @ self.W2 + self.b2
+        self.A1_dropped = dropout(self.A1, self.dropout_rate, training) # Dropout after ReLU
+        output = self.A1_dropped @ self.W2 + self.b2
+        self.cache_training = training # Save training state for backward
         return output
 
     def backward(self, d_output):
@@ -285,17 +304,21 @@ class FeedForward:
         batch_size, seq_len, _ = d_output.shape
 
         # Gradients for W2, b2
-        self.grads['W2'] = np.einsum('bsf,bse->fe', self.A1, d_output)  # (ff_dim, embed_dim)
-        self.grads['b2'] = np.sum(d_output, axis=(0, 1))  # (embed_dim,)
-        d_A1 = d_output @ self.W2.T  # (batch_size, seq_len, ff_dim)
+        self.grads['W2'] = np.einsum('bsf,bse->fe', self.A1_dropped, d_output)
+        self.grads['b2'] = np.sum(d_output, axis=(0, 1))
+        d_A1_dropped = d_output @ self.W2.T
+
+        # Backward pass for dropout after ReLU
+        if self.cache_training and self.dropout_rate > 0:
+            d_A1_dropped = d_A1_dropped * ((np.random.rand(*d_A1_dropped.shape) > self.dropout_rate) / (1 - self.dropout_rate))
 
         # Gradients for A1 (ReLU)
-        d_Z1 = relu_backward(d_A1, self.Z1)  # (batch_size, seq_len, ff_dim)
+        d_Z1 = relu_backward(d_A1_dropped, self.Z1)
 
         # Gradients for W1, b1
-        self.grads['W1'] = np.einsum('bsd,bsf->df', self.x, d_Z1)  # (embed_dim, ff_dim)
-        self.grads['b1'] = np.sum(d_Z1, axis=(0, 1))  # (ff_dim,)
-        d_x = d_Z1 @ self.W1.T  # (batch_size, seq_len, embed_dim)
+        self.grads['W1'] = np.einsum('bsd,bsf->df', self.x, d_Z1)
+        self.grads['b1'] = np.sum(d_Z1, axis=(0, 1))
+        d_x = d_Z1 @ self.W1.T
         return d_x
 
 
@@ -305,9 +328,9 @@ class TransformerBlock:
     Includes Layer Normalization and Residual Connections.
     """
 
-    def __init__(self, embed_dim, num_heads, ff_dim):
-        self.attention = MultiHeadSelfAttention(embed_dim, num_heads)
-        self.feed_forward = FeedForward(embed_dim, ff_dim)
+    def __init__(self, embed_dim, num_heads, ff_dim, dropout_rate=0.0):
+        self.attention = MultiHeadSelfAttention(embed_dim, num_heads, dropout_rate)
+        self.feed_forward = FeedForward(embed_dim, ff_dim, dropout_rate)
 
         # Layer normalization parameters
         self.norm1_gamma = np.ones(embed_dim)
@@ -321,11 +344,12 @@ class TransformerBlock:
         }
         self.grads = {k: np.zeros_like(v) for k, v in self.params.items()}
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, training=True):
         """
         Forward pass for a Transformer block.
         x: (batch_size, seq_len, embed_dim)
         mask: (1, 1, seq_len, seq_len) or None.
+        training: boolean, if True, apply dropout.
         Returns: (batch_size, seq_len, embed_dim)
         """
         # Layer norm 1
@@ -333,7 +357,7 @@ class TransformerBlock:
                                                                                               self.norm1_beta)
 
         # Attention
-        attn_output = self.attention.forward(norm1_out, mask)
+        attn_output = self.attention.forward(norm1_out, mask, training)
 
         # Residual connection 1
         attn_output_residual = x + attn_output
@@ -344,7 +368,7 @@ class TransformerBlock:
                                                                                               self.norm2_beta)
 
         # Feed forward
-        ff_output = self.feed_forward.forward(norm2_out)
+        ff_output = self.feed_forward.forward(norm2_out, training)
 
         # Residual connection 2
         output = attn_output_residual + ff_output
@@ -368,16 +392,11 @@ class TransformerBlock:
         d_norm2_out = self.feed_forward.backward(d_ff_output)
 
         # Backward through Layer norm 2
-        # dL/dgamma = sum(dL/d_norm_out * x_normalized)
-        # dL/dbeta = sum(dL/d_norm_out)
         self.grads['norm2_gamma'] = np.sum(d_norm2_out * self.norm2_x_normalized, axis=(0, 1))
         self.grads['norm2_beta'] = np.sum(d_norm2_out, axis=(0, 1))
 
-        # dL/dx_normalized = dL/d_norm_out * gamma
         d_norm2_x_normalized = d_norm2_out * self.norm2_gamma
 
-        # dL/d_variance and dL/d_mean calculations for LayerNorm
-        # These are derived from the chain rule for LayerNorm
         N = attn_output_residual_input.shape[-1]  # embed_dim
         d_var = np.sum(d_norm2_x_normalized * (attn_output_residual_input - self.norm2_mean) * -0.5 * np.power(
             self.norm2_variance + 1e-5, -1.5), axis=-1, keepdims=True)
@@ -413,24 +432,88 @@ class TransformerBlock:
         d_x = d_x_from_attn_residual + d_x_from_norm1
         return d_x
 
+def _top_k_top_p_sampling(logits, top_k=0, top_p=1.0, temperature=1.0):
+    """
+    Applies top-k and top-p sampling to logits.
+    logits: (vocab_size,) - raw logits for the next token.
+    top_k: int - if > 0, only consider the top_k most likely tokens.
+    top_p: float - if < 1.0, only consider tokens whose cumulative probability
+                   exceeds top_p.
+    temperature: float - controls randomness.
+    Returns: int - sampled token ID.
+    """
+    # Apply temperature
+    logits = logits / temperature
+
+    # Apply repetition penalty (already handled before this function)
+
+    # Cap top_k to the size of the logits array
+    _top_k = min(top_k, logits.shape[0]) if top_k > 0 else 0
+
+    # Top-k filtering
+    if _top_k > 0:
+        indices_to_remove = logits < np.sort(logits)[-_top_k] # Use _top_k here
+        logits[indices_to_remove] = -np.inf
+
+    probabilities = softmax(logits[np.newaxis, :])[0]
+
+    # Top-p filtering
+    if top_p < 1.0:
+        sorted_indices = np.argsort(probabilities)[::-1]
+        sorted_probabilities = probabilities[sorted_indices]
+        cumulative_probabilities = np.cumsum(sorted_probabilities)
+
+        # Remove tokens with cumulative probability above the threshold
+        # Find the first index where cumulative probability > top_p
+        cutoff_idx = np.where(cumulative_probabilities > top_p)[0]
+        if len(cutoff_idx) > 0:
+            cutoff_idx = cutoff_idx[0]
+            # Keep at least one token
+            if cutoff_idx == 0 and len(sorted_probabilities) > 1:
+                cutoff_idx = 1
+            elif cutoff_idx == 0 and len(sorted_probabilities) == 1:
+                pass # Keep the only token
+            else:
+                # If the first token already exceeds top_p, keep only that one.
+                # Otherwise, keep tokens up to the cutoff.
+                if cumulative_probabilities[0] > top_p:
+                    cutoff_idx = 1
+                
+            indices_to_remove = sorted_indices[cutoff_idx:]
+            probabilities[indices_to_remove] = 0.0
+            
+            # Re-normalize probabilities
+            if np.sum(probabilities) > 0:
+                probabilities = probabilities / np.sum(probabilities)
+            else: # Fallback to uniform if all probabilities become zero
+                probabilities = np.ones_like(probabilities) / len(probabilities)
+
+
+    # Sample from the filtered distribution
+    if np.sum(probabilities) == 0: # Fallback if all probabilities are zero
+        return np.random.choice(len(logits))
+    
+    return np.random.choice(len(logits), p=probabilities)
+
 
 class Transformer:
     """
     A small Transformer model for sequence-to-sequence tasks.
     """
 
-    def __init__(self, vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len):
+    def __init__(self, vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate=0.0):
         self.vocab_size = vocab_size
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.ff_dim = ff_dim
         self.num_layers = num_layers
         self.max_seq_len = max_seq_len
+        self.dropout_rate = dropout_rate
 
         self.token_embedding = np.random.randn(vocab_size, embed_dim) * 0.01
         self.positional_encoding = PositionalEncoding(embed_dim, max_seq_len)
         self.transformer_blocks = [
-            TransformerBlock(embed_dim, num_heads, ff_dim) for _ in range(num_layers)
+            TransformerBlock(embed_dim, num_heads, ff_dim, dropout_rate) for _ in range(num_layers)
         ]
         self.output_layer = np.random.randn(embed_dim, vocab_size) * 0.01
         self.output_bias = np.zeros(vocab_size)
@@ -501,7 +584,7 @@ class Transformer:
         """
         Forward pass for the Transformer model.
         x: (batch_size, seq_len) - token IDs
-        training: bool, if True, applies look-ahead mask.
+        training: bool, if True, applies look-ahead mask and dropout.
         Returns: (batch_size, seq_len, vocab_size) - logits for each token.
         """
         batch_size, seq_len = x.shape
@@ -519,7 +602,7 @@ class Transformer:
 
         # Transformer blocks
         for block in self.transformer_blocks:
-            x = block.forward(x, mask)
+            x = block.forward(x, mask, training)
 
         # Store output of last block for backward pass (input to final linear layer)
         self.cache_x_after_blocks = x
@@ -537,8 +620,6 @@ class Transformer:
         batch_size, seq_len, _ = d_output_logits.shape
 
         # Gradients for output layer
-        # dL/dW_output = (input_to_output_layer).T @ dL/d(output_logits)
-        # dL/db_output = sum(dL/d(output_logits))
         self.grads['output_layer'] = np.einsum('bsd,bsv->dv', self.cache_x_after_blocks, d_output_logits)
         self.grads['output_bias'] = np.sum(d_output_logits, axis=(0, 1))
         d_x_from_output = d_output_logits @ self.output_layer.T
@@ -549,17 +630,39 @@ class Transformer:
             d_x = block.backward(d_x)
 
         # Gradients for token embeddings
-        # d_x at this point is dL/d(embeddings_after_pos_enc)
-        # Since positional encoding is not trainable, this is also dL/d(token_embeddings)
         d_token_embedding = np.zeros_like(self.token_embedding)
         for i in range(batch_size):
             for j in range(seq_len):
-                # Accumulate gradients for each token ID
                 d_token_embedding[self.cache_x_token_ids[i, j]] += d_x[i, j]
         self.grads['token_embedding'] = d_token_embedding
 
         # Update weights
         self.update_weights(learning_rate)
+
+    def train_step(self, input_tokens, target_tokens, learning_rate=0.01, training=True):
+        """
+        Performs one training step (forward, loss, backward, update).
+        input_tokens: (batch_size, seq_len) - input token IDs.
+        target_tokens: (batch_size, seq_len) - target token IDs (shifted input).
+        learning_rate: float.
+        training: bool, if True, apply dropout and look-ahead mask.
+        Returns: float - computed loss.
+        """
+        # Forward pass
+        output_logits = self.forward(input_tokens, training=training)
+
+        # Reshape for loss calculation: (batch_size * seq_len, vocab_size)
+        predictions = softmax(output_logits.reshape(-1, self.vocab_size))
+        targets_flat = target_tokens.flatten()
+
+        loss = label_smoothing_loss(predictions, targets_flat, self.vocab_size, smoothing=0.1)
+
+        # Backward pass
+        d_predictions = label_smoothing_backward(predictions, targets_flat, self.vocab_size, smoothing=0.1)
+        d_output_logits = d_predictions.reshape(output_logits.shape)
+
+        self.backward(d_output_logits, learning_rate)
+        return loss
 
     def update_weights(self, learning_rate):
         """
@@ -587,52 +690,80 @@ class Transformer:
                 if k in block.feed_forward.grads:
                     block.feed_forward.params[k] -= learning_rate * block.feed_forward.grads[k]
 
-    def train_step(self, input_tokens, target_tokens, learning_rate=0.01):
+    def _beam_search_generate(self, prompt_tokens, max_new_tokens, temperature, repetition_penalty, pad_token_id, eos_token_id, beam_width):
         """
-        Performs one training step (forward, loss, backward, update).
-        input_tokens: (batch_size, seq_len) - input token IDs.
-        target_tokens: (batch_size, seq_len) - target token IDs (shifted input).
-        learning_rate: float.
-        Returns: float - computed loss.
+        Generates tokens using beam search.
         """
-        # Forward pass
-        output_logits = self.forward(input_tokens, training=True)
+        # Beams are (log_probability, sequence_of_token_ids)
+        beams = [(0.0, list(prompt_tokens[0]))]
+        
+        for _ in range(max_new_tokens):
+            all_candidates = []
+            for log_prob, current_sequence in beams:
+                if current_sequence[-1] == eos_token_id:
+                    all_candidates.append((log_prob, current_sequence))
+                    continue
 
-        # Reshape for loss calculation: (batch_size * seq_len, vocab_size)
-        predictions = softmax(output_logits.reshape(-1, self.vocab_size))
-        targets_flat = target_tokens.flatten()
+                # Truncate if sequence exceeds max_seq_len
+                input_seq = current_sequence[-self.max_seq_len:]
+                input_tensor = np.array(input_seq).reshape(1, -1)
 
-        loss = cross_entropy_loss(predictions, targets_flat)
+                output_logits = self.forward(input_tensor, training=False)
+                last_token_logits = output_logits[0, -1, :] / temperature
 
-        # Backward pass
-        # d_predictions is dL/d(softmax_output)
-        d_predictions = cross_entropy_backward(predictions, targets_flat)
-        # d_output_logits is dL/d(logits_before_softmax)
-        # This is the gradient that needs to be propagated back through the model
-        d_output_logits = d_predictions.reshape(output_logits.shape)
+                if repetition_penalty > 1.0:
+                    unique_current_tokens = np.unique([t for t in current_sequence if t != pad_token_id])
+                    for token_id in unique_current_tokens:
+                        if 0 <= token_id < self.vocab_size:
+                            last_token_logits[token_id] /= repetition_penalty
 
-        self.backward(d_output_logits, learning_rate)
-        return loss
+                probabilities = softmax(last_token_logits[np.newaxis, :])[0]
+                
+                # Get top beam_width candidates for the next token
+                top_token_indices = np.argsort(probabilities)[::-1][:beam_width]
+
+                for next_token_id in top_token_indices:
+                    new_log_prob = log_prob + np.log(probabilities[next_token_id])
+                    new_sequence = current_sequence + [next_token_id]
+                    all_candidates.append((new_log_prob, new_sequence))
+            
+            # Sort all candidates by log probability and select top beam_width
+            beams = sorted(all_candidates, key=lambda x: x[0], reverse=True)[:beam_width]
+
+            # If all beams have ended, stop early
+            if all(b[1][-1] == eos_token_id for b in beams):
+                break
+        
+        # Return the sequence from the best beam
+        return np.array(beams[0][1])
+
 
     def generate(self, prompt_tokens, max_new_tokens=15, temperature=0.8, repetition_penalty=1.0, pad_token_id=0,
-                 eos_token_id=3):
+                 eos_token_id=3, top_k=0, top_p=1.0, beam_width=0):
         """
-        Generates new tokens based on a prompt.
+        Generates new tokens based on a prompt using various sampling strategies.
         prompt_tokens: (1, seq_len) - initial token IDs.
         max_new_tokens: int - maximum number of tokens to generate.
         temperature: float - controls randomness in sampling. Higher means more random.
         repetition_penalty: float - penalizes tokens that have already appeared. > 1.0 to penalize.
         pad_token_id: int - ID of the padding token.
         eos_token_id: int - ID of the end-of-sequence token.
+        top_k: int - if > 0, only consider the top_k most likely tokens.
+        top_p: float - if < 1.0, only consider tokens whose cumulative probability
+                       exceeds top_p.
+        beam_width: int - if > 0, use beam search with this width. Otherwise, use sampling.
         Returns: np.ndarray - array of generated token IDs.
         """
+        if beam_width > 0:
+            return self._beam_search_generate(prompt_tokens, max_new_tokens, temperature, repetition_penalty, pad_token_id, eos_token_id, beam_width)
+
         generated_tokens = list(prompt_tokens[0])
         batch_size = 1  # Generation is always batch size 1
 
         for _ in range(max_new_tokens):
             current_seq_len = len(generated_tokens)
             if current_seq_len == 0:
-                break  # Should not happen if BOS is handled correctly
+                break
 
             # Truncate if sequence exceeds max_seq_len
             input_seq = generated_tokens[-self.max_seq_len:]
@@ -642,23 +773,18 @@ class Transformer:
             output_logits = self.forward(input_tensor, training=False)
 
             # Get logits for the last token in the sequence
-            last_token_logits = output_logits[0, -1, :] / temperature
+            last_token_logits = output_logits[0, -1, :]
 
             if repetition_penalty > 1.0:
                 # Apply repetition penalty
-                # Get tokens in the current sequence (excluding PAD for penalty)
-                current_tokens_in_seq = [t for t in input_tensor[0] if t != pad_token_id]
-                unique_current_tokens = np.unique(current_tokens_in_seq)
-
+                unique_current_tokens = np.unique([t for t in generated_tokens if t != pad_token_id])
                 for token_id in unique_current_tokens:
-                    if 0 <= token_id < self.vocab_size:  # Ensure token_id is valid
+                    if 0 <= token_id < self.vocab_size:
                         last_token_logits[token_id] /= repetition_penalty
 
-            # Apply softmax to get probabilities
-            probabilities = softmax(last_token_logits[np.newaxis, :])[0]
-
-            # Sample next token
-            next_token = np.random.choice(self.vocab_size, p=probabilities)
+            # Sample next token using top-k and top-p
+            next_token = _top_k_top_p_sampling(last_token_logits, top_k, top_p, temperature)
+            
             generated_tokens.append(next_token)
 
             # Stop if EOS token is generated
