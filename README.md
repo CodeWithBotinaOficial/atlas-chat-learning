@@ -12,7 +12,8 @@ The core of Atlas is a Transformer neural network, implemented without any exter
 -   **Feed-Forward Networks**: For processing information, also with **dropout**.
 -   **Layer Normalization and Residual Connections**: For stable training.
 -   **Label Smoothing Cross-Entropy with Padding Mask**: A more robust loss function that ignores padding tokens.
--   **Xavier/Glorot Initialization**: For more stable weight initialization.
+-   **Xavier/Glorot Uniform Initialization**: For more stable weight initialization.
+-   **Gradient Clipping**: To prevent exploding gradients and improve training stability.
 
 The model's capacity has been adjusted to smaller, more stable values (`embed_dim=32`, `num_heads=2`, `ff_dim=64`, `num_layers=2`) to prevent model collapse and improve training stability. The vocabulary grows dynamically as new words are encountered, and the model's parameters are saved and loaded to retain its "memory" across sessions.
 
@@ -27,7 +28,8 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
     -   **Beam Search**: An optional strategy for finding the most probable sequence of words.
     -   **Temperature and Repetition Penalty**: Controls randomness and discourages repetitive phrases.
 -   **Dropout Regularization**: Improves generalization and prevents overfitting.
--   **Robustness**: Includes checks for NaN/Inf weights and empty responses.
+-   **Robustness**: Includes checks for NaN/Inf weights, numerically stable softmax, and empty responses.
+-   **Execution Modes**: Supports training-only, production-only, and dual (learn & respond) modes.
 -   **Minimal Dependencies**: Built primarily with Python's standard library and NumPy.
 
 ## Getting Started
@@ -51,11 +53,27 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 
 ### Running Atlas
 
-To start chatting with Atlas, run the `main.py` script:
+To start chatting with Atlas, run the `main.py` script. You can specify different execution modes:
 
-```bash
-python main.py
-```
+-   **Dual Mode (Default)**: Learn from your input and generate responses.
+    ```bash
+    python main.py
+    ```
+    or
+    ```bash
+    python main.py --dual
+    ```
+
+-   **Training Mode**: Only learn from your input. Atlas will process your messages and update its model, but will not generate responses. This is useful for focused training without interaction overhead.
+    ```bash
+    python main.py --training
+    ```
+    In this mode, Atlas will print a `.` for each successful learning step or `x` if learning was skipped (e.g., due to short input).
+
+-   **Production Mode**: Only generate responses. Atlas will use its current learned model to respond but will not update its weights. This is suitable for deployment where you want stable responses without further learning.
+    ```bash
+    python main.py --production
+    ```
 
 ### Running Tests
 
@@ -71,23 +89,24 @@ python -m pytest
 -   Atlas will respond based on what it has learned, leveraging its conversation history.
 -   The more you chat, the smarter Atlas should become!
 -   Type `quit` or `exit` to save the model and exit the conversation.
--   The model automatically saves every 5 interactions.
+-   The model automatically saves every 5 interactions (except in production mode).
 
 ### Training
 
-Every message you send to Atlas serves as a training example. The model performs one gradient step (backpropagation) after each of your inputs to update its internal parameters. This process now includes:
+Every message you send to Atlas (in `dual` or `training` mode) serves as a training example. The model performs one gradient step (backpropagation) after each of your inputs to update its internal parameters. This process now includes:
 -   **Conversation Context**: Your current message is combined with recent conversation history to provide a richer training signal.
 -   **Replay Buffer**: Past user messages are occasionally re-sampled and used for additional training steps, helping the model remember and reinforce earlier learnings.
 -   **Learning Rate Decay**: The learning rate gradually decreases over time to ensure stable convergence.
+-   **Gradient Clipping**: Prevents numerical instability during training.
 
 This continuous learning process allows Atlas to adapt to your conversational style and the topics you discuss, producing more structured and context-aware answers.
 
 ## Project Structure
 
--   `main.py`: The main script to run the chatbot.
+-   `main.py`: The main script to run the chatbot, now with argument parsing for execution modes.
 -   `atlas/`: Contains the core logic.
     -   `brain.py`: Manages the chatbot's overall logic, including tokenization, vocabulary management, conversation history, replay buffer, and orchestrating the Transformer.
-    -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search).
+    -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
 -   `requirements.txt`: Lists Python dependencies.
 -   `README.md`: This file.
 -   `tests/`: Unit tests for the components.
@@ -97,6 +116,12 @@ This continuous learning process allows Atlas to adapt to your conversational st
 -   **Small Model Size**: Due to its small size, Atlas may produce repetitive or less coherent responses compared to larger, pre-trained models. For better quality, training with a much larger dataset and a more powerful model would be necessary.
 -   **Limited Context**: `max_seq_len` is set to 50, meaning it can only consider a short window of past tokens.
 -   **Computational Cost**: Training is done on the CPU using NumPy, which is slower than GPU-accelerated frameworks.
+
+## Performance Requirements
+
+-   **`--dual` mode**: Requires a modern CPU (e.g., 2+ GHz, 4 cores) for a responsive experience. May be slow on low-end machines.
+-   **`--training` mode**: Lighter on resources as it skips response generation.
+-   **`--production` mode**: Lighter on resources as it skips learning.
 
 ## Troubleshooting
 

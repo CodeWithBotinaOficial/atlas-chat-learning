@@ -10,6 +10,7 @@ n-gram based learning and persistent memory.
 from atlas.brain import AtlasBrain
 import sys
 import os
+import argparse
 
 # --- Readline setup for command history and arrow key navigation ---
 try:
@@ -38,7 +39,23 @@ def main():
     Initializes the AtlasBrain, handles user interaction,
     learning, response generation, and persistent saving.
     """
-    # Updated to use new model and vocab paths
+    parser = argparse.ArgumentParser(description="Run the Atlas conversational AI in different modes.")
+    parser.add_argument('--training', action='store_true', help='Only learn from input, do not generate responses.')
+    parser.add_argument('--production', action='store_true', help='Only generate responses, do not learn.')
+    parser.add_argument('--dual', action='store_true', help='Both learn and generate responses (default).')
+    args = parser.parse_args()
+
+    # Determine the operating mode
+    mode = 'dual'
+    if args.training:
+        mode = 'training'
+    elif args.production:
+        mode = 'production'
+    elif args.dual:
+        mode = 'dual' # Explicitly set if --dual is passed, though it's the default
+
+    print(f"Atlas AI starting in {mode.upper()} mode.")
+
     brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl")
     print("Welcome to Atlas! Type 'quit' or 'exit' to save and exit.")
 
@@ -54,19 +71,38 @@ def main():
                 brain.save()
                 break
             
-            brain.learn(user_input)
-            
-            try:
-                response = brain.respond(prompt=user_input)
-            except Exception as e:
-                print(f"Atlas: An error occurred while generating a response: {e}")
-                response = "I'm having trouble responding right now, please try again."
-            
-            print(f"Atlas: {response}")
+            if mode in ['training', 'dual']:
+                learn_result = brain.learn(user_input)
+                if mode == 'training':
+                    if learn_result is not None:
+                        sys.stdout.write(".")
+                        sys.stdout.flush()
+                    else:
+                        sys.stdout.write("x") # Indicate skipped learning
+                        sys.stdout.flush()
+                    continue # Skip response generation in training mode
+
+            if mode in ['production', 'dual']:
+                try:
+                    response = brain.respond(prompt=user_input)
+                except Exception as e:
+                    print(f"Atlas: An error occurred while generating a response: {e}")
+                    response = "I'm having trouble responding right now, please try again."
+                
+                print(f"Atlas: {response}")
+            elif mode == 'training':
+                # This branch should ideally not be reached due to 'continue' above,
+                # but as a safeguard, if somehow reached, don't print "Atlas: "
+                pass
+
 
             interaction_count += 1
             if interaction_count % auto_save_interval == 0:
-                brain.save()
+                if mode != 'production': # Only save if learning happened
+                    brain.save()
+                    if mode == 'training':
+                        print("\n(Auto-saved model during training)")
+
 
     except KeyboardInterrupt:
         print("\nAtlas: Interrupted. Saving memory before exiting...")

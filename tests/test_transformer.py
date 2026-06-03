@@ -437,3 +437,30 @@ def test_transformer_generate_beam_search():
     # If EOS is generated, it should be the last token
     if AtlasBrain.EOS_TOKEN_ID in generated_tokens:
         assert generated_tokens[-1] == AtlasBrain.EOS_TOKEN_ID
+
+def test_transformer_nan_stability_during_training():
+    vocab_size = 10
+    embed_dim = 16
+    num_heads = 2
+    ff_dim = 32
+    num_layers = 1
+    max_seq_len = 5
+    learning_rate = 0.001 # Use the new, lower learning rate
+
+    transformer = Transformer(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+
+    # Simple repeating pattern for training
+    input_sequence = np.array([[1, 2, 3, 1]])
+    target_sequence = np.array([[2, 3, 1, 2]])
+
+    # Pad to max_seq_len
+    input_padded = np.full((1, max_seq_len), AtlasBrain.PAD_TOKEN_ID, dtype=int)
+    target_padded = np.full((1, max_seq_len), AtlasBrain.PAD_TOKEN_ID, dtype=int)
+    input_padded[0, :input_sequence.shape[1]] = input_sequence[0]
+    target_padded[0, :target_sequence.shape[1]] = target_sequence[0]
+
+    # Train for a significant number of steps and check for NaN loss
+    for i in range(100): # 100 training steps
+        loss = transformer.train_step(input_padded, target_padded, learning_rate, training=True, pad_token_id=AtlasBrain.PAD_TOKEN_ID)
+        assert loss is not None, f"NaN or Inf loss detected at training step {i}"
+        assert not np.isnan(loss) and not np.isinf(loss), f"NaN or Inf loss value at training step {i}: {loss}"

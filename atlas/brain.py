@@ -38,7 +38,7 @@ class AtlasBrain:
         self.ff_dim = 64
         self.num_layers = 2
         self.max_seq_len = 50 # Reduced max_seq_len
-        self.learning_rate = 0.005
+        self.learning_rate = 0.001 # Reduced base learning rate
         self.dropout_rate = 0.1
         self.repetition_penalty = 1.2  # A small penalty to discourage immediate repetition
 
@@ -183,7 +183,10 @@ class AtlasBrain:
         on the Transformer model. Also manages conversation history and replay buffer.
         """
         user_tokens = self._tokenize(user_message)
-        if not user_tokens:
+        
+        # Skip learning if user message is too short after tokenization
+        if not user_tokens or len(user_tokens) < 2:
+            print("Skipping learning: user message too short after tokenization.")
             return None
         
         self.interaction_count += 1 # Increment only for valid interactions
@@ -225,10 +228,11 @@ class AtlasBrain:
         """
         Generates a response based on an optional prompt, incorporating conversation history.
         """
-        default_message = "I'm still learning... Could you say that differently?"
+        default_message_learning = "I'm learning to speak... please teach me more!"
+        default_message_not_sure = "I'm not sure how to answer that."
 
         if self.vocab_size <= len(self.SPECIAL_TOKENS):  # Only special tokens in vocab
-            return "I'm learning to speak... please teach me more!"
+            return default_message_learning
 
         # Construct context from conversation history
         context_ids = []
@@ -292,7 +296,7 @@ class AtlasBrain:
 
         # Now check for empty response and return default message if needed
         if not atlas_response:
-            return default_message
+            return default_message_not_sure
 
         return atlas_response
 

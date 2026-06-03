@@ -1,13 +1,17 @@
-# atlas/transformer.py
 import numpy as np
 import math
 
 
 # Helper functions
-def softmax(x):
-    """Compute softmax values for each row of x."""
+def softmax(x, epsilon=1e-12):
+    """
+    Compute softmax values for each row of x, with numerical stability.
+    Clips input to prevent overflow and adds epsilon to denominator to prevent division by zero.
+    """
+    # Clip values to prevent overflow in exp()
+    x = np.clip(x, -100, 100)
     e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
-    return e_x / np.sum(e_x, axis=-1, keepdims=True)
+    return e_x / (np.sum(e_x, axis=-1, keepdims=True) + epsilon)
 
 def dropout(x, dropout_rate, training):
     """
@@ -42,10 +46,30 @@ def relu_backward(dA, Z):
 
 def xavier_init(input_dim, output_dim):
     """
-    Xavier/Glorot initialization for weights.
+    Xavier/Glorot uniform initialization for weights.
     """
     limit = np.sqrt(6 / (input_dim + output_dim))
     return np.random.uniform(-limit, limit, size=(input_dim, output_dim))
+
+def clip_gradients(grads, max_norm=5.0):
+    """
+    Clips the global norm of gradients.
+    grads: A dictionary of gradient arrays.
+    max_norm: The maximum allowed global norm.
+    """
+    total_norm = 0.0
+    # Calculate total norm
+    for g in grads.values():
+        if g is not None:
+            total_norm += np.sum(g**2)
+    total_norm = np.sqrt(total_norm)
+
+    # Apply clipping if total_norm exceeds max_norm
+    if total_norm > max_norm:
+        clip_coef = max_norm / (total_norm + 1e-6) # Add epsilon to prevent division by zero
+        for k in grads:
+            if grads[k] is not None:
+                grads[k] *= clip_coef
 
 
 def label_smoothing_loss(predictions, targets, vocab_size, smoothing=0.1, epsilon=1e-9, padding_mask=None):
@@ -491,6 +515,12 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
 
     probabilities = softmax(logits[np.newaxis, :])[0]
 
+    # Check for NaN in probabilities
+    if np.any(np.isnan(probabilities)):
+        print("WARNING: NaN detected in probabilities during sampling. Falling back to greedy (argmax).")
+        # Fallback to greedy (argmax)
+        return np.argmax(logits)
+
     # Top-p filtering
     if top_p < 1.0:
         sorted_indices = np.argsort(probabilities)[::-1]
@@ -651,11 +681,10 @@ class Transformer:
         output_logits = x @ self.output_layer + self.output_bias  # (batch_size, seq_len, vocab_size)
         return output_logits
 
-    def backward(self, d_output_logits, learning_rate):
+    def backward(self, d_output_logits):
         """
         Backward pass for the Transformer model.
         d_output_logits: (batch_size, seq_len, vocab_size) - gradient from the loss function.
-        learning_rate: float - learning rate for SGD.
         """
         batch_size, seq_len, _ = d_output_logits.shape
 
@@ -675,9 +704,6 @@ class Transformer:
             for j in range(seq_len):
                 d_token_embedding[self.cache_x_token_ids[i, j]] += d_x[i, j]
         self.grads['token_embedding'] = d_token_embedding
-
-        # Update weights
-        self.update_weights(learning_rate)
 
     def train_step(self, input_tokens, target_tokens, learning_rate=0.01, training=True, pad_token_id=0):
         """
@@ -715,34 +741,52 @@ class Transformer:
         d_predictions = label_smoothing_backward(predictions, targets_flat, self.vocab_size, smoothing=0.1, padding_mask=padding_mask)
         d_output_logits = d_predictions.reshape(output_logits.shape)
 
-        self.backward(d_output_logits, learning_rate)
+        self.backward(d_output_logits)
+        self.update_weights(learning_rate)
         return loss
 
     def update_weights(self, learning_rate):
         """
         Updates all model parameters using SGD with the computed gradients.
+        Applies gradient clipping.
         """
-        # Update top-level parameters
+        all_grads = {}
+        # Collect all gradients into a single dictionary
         for k in ['token_embedding', 'output_layer', 'output_bias']:
-            if k in self.params and k in self.grads:
-                self.params[k] -= learning_rate * self.grads[k]
+            if k in self.grads:
+                all_grads[k] = self.grads[k]
 
-        # Update block parameters
         for i, block in enumerate(self.transformer_blocks):
-            # Update block's layer norm parameters
             for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
-                if k in block.params and k in block.grads:
-                    block.params[k] -= learning_rate * block.grads[k]
-
-            # Update attention parameters
-            for k in block.attention.params.keys():
+                if k in block.grads:
+                    all_grads[f'block_{i}_{k}'] = block.grads[k]
+            for k in block.attention.grads.keys():
                 if k in block.attention.grads:
-                    block.attention.params[k] -= learning_rate * block.attention.grads[k]
-
-            # Update feed_forward parameters
-            for k in block.feed_forward.params.keys():
+                    all_grads[f'block_{i}_attn_{k}'] = block.attention.grads[k]
+            for k in block.feed_forward.grads.keys():
                 if k in block.feed_forward.grads:
-                    block.feed_forward.params[k] -= learning_rate * block.feed_forward.grads[k]
+                    all_grads[f'block_{i}_ff_{k}'] = block.feed_forward.grads[k]
+        
+        # Apply gradient clipping
+        clip_gradients(all_grads, max_norm=5.0)
+
+        # Update weights using clipped gradients
+        for k in ['token_embedding', 'output_layer', 'output_bias']:
+            if k in self.params and k in all_grads:
+                self.params[k] -= learning_rate * all_grads[k]
+
+        for i, block in enumerate(self.transformer_blocks):
+            for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
+                if k in block.params and f'block_{i}_{k}' in all_grads:
+                    block.params[k] -= learning_rate * all_grads[f'block_{i}_{k}']
+
+            for k in block.attention.params.keys():
+                if k in block.attention.params and f'block_{i}_attn_{k}' in all_grads:
+                    block.attention.params[k] -= learning_rate * all_grads[f'block_{i}_attn_{k}']
+
+            for k in block.feed_forward.params.keys():
+                if k in block.feed_forward.params and f'block_{i}_ff_{k}' in all_grads:
+                    block.feed_forward.params[k] -= learning_rate * all_grads[f'block_{i}_ff_{k}']
 
     def _beam_search_generate(self, prompt_tokens, max_new_tokens, temperature, repetition_penalty, pad_token_id, eos_token_id, beam_width):
         """
@@ -773,6 +817,15 @@ class Transformer:
 
                 probabilities = softmax(last_token_logits[np.newaxis, :])[0]
                 
+                # Check for NaN in probabilities
+                if np.any(np.isnan(probabilities)):
+                    print("WARNING: NaN detected in probabilities during beam search sampling. Falling back to greedy (argmax).")
+                    next_token_id = np.argmax(last_token_logits) # Use raw logits for greedy
+                    new_log_prob = log_prob + np.log(probabilities[next_token_id]) if probabilities[next_token_id] > 0 else -np.inf
+                    new_sequence = current_sequence + [next_token_id]
+                    all_candidates.append((new_log_prob, new_sequence))
+                    continue # Skip other candidates for this beam if NaN
+
                 # Get top beam_width candidates for the next token
                 # Ensure indices are within vocab_size, which they should be if last_token_logits is vocab_size long
                 top_token_indices = np.argsort(probabilities)[::-1][:beam_width]
