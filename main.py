@@ -13,6 +13,16 @@ import os
 import argparse
 from atlas.config_loader import load_config # Import load_config
 
+# Import web scraping and text processing modules
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    import web_scraper
+    import text_processor
+except ImportError:
+    # These will be handled specifically if --scraping is used
+    pass
+
 # --- Readline setup for command history and arrow key navigation ---
 try:
     import readline
@@ -33,21 +43,89 @@ except Exception as e:
     print(f"An error occurred while setting up readline: {e}. Command history and arrow keys may not work.")
 # --- End Readline setup ---
 
+MAX_CHUNK_SIZE = 1000 # Max characters per chunk for training
 
 def main():
     """
     Main function to run the Atlas conversational AI.
     Initializes the AtlasBrain, handles user interaction,
     learning, response generation, and persistent saving.
+    Also handles the new web scraping and training feature.
     """
     parser = argparse.ArgumentParser(description="Run the Atlas conversational AI in different modes.")
     parser.add_argument('--training', action='store_true', help='Only learn from input, do not generate responses.')
     parser.add_argument('--production', action='store_true', help='Only generate responses, do not learn.')
     parser.add_argument('--dual', action='store_true', help='Both learn and generate responses (default).')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the configuration YAML file.')
+    parser.add_argument('--scraping', type=str, help='Scrape content from the given URL, sanitize it, and use it to train the AI.')
     args = parser.parse_args()
 
-    # Determine the operating mode
+    # Load configuration
+    config = load_config(args.config)
+    brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl", config=config)
+
+    # --- Web Scraping and Training Feature ---
+    if args.scraping:
+        print(f"[✓] Attempting to scrape and train from: {args.scraping}")
+        try:
+            # Check for dependencies
+            import requests
+            from bs4 import BeautifulSoup
+        except ImportError:
+            print("Error: 'requests' or 'beautifulsoup4' library not found.", file=sys.stderr)
+            print("Please install them using: pip install requests beautifulsoup4 lxml", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            if not web_scraper.check_robots_txt(args.scraping):
+                print("[✗] Scraping disallowed by robots.txt. Exiting.")
+                sys.exit(1)
+
+            user_confirm = input("Do you want to scrape this page and train the AI? (y/n): ").lower()
+            if user_confirm != 'y':
+                print("[✗] User cancelled. Exiting.")
+                sys.exit(0)
+
+            print("[✓] Scraping and sanitizing text... (This may take a moment)")
+            scraped_text = web_scraper.scrape_article_text(args.scraping)
+            
+            if not scraped_text.strip():
+                print("[✗] No significant text content found on the page. Exiting.")
+                sys.exit(1)
+
+            print("[✓] Training Atlas with the new content... (This may take a moment)")
+            # Split text into chunks for learning
+            # A simple chunking by character count, trying to respect word boundaries
+            words = scraped_text.split()
+            current_chunk = []
+            current_chunk_len = 0
+            
+            for word in words:
+                # Add 1 for space
+                if current_chunk_len + len(word) + 1 > MAX_CHUNK_SIZE and current_chunk:
+                    brain.learn(" ".join(current_chunk))
+                    current_chunk = [word]
+                    current_chunk_len = len(word)
+                else:
+                    current_chunk.append(word)
+                    current_chunk_len += len(word) + 1
+            
+            if current_chunk: # Learn the last chunk
+                brain.learn(" ".join(current_chunk))
+
+            brain.save()
+            print("[✓] Training complete! Model saved. Exiting.")
+            sys.exit(0)
+
+        except requests.exceptions.RequestException as e:
+            print(f"[✗] Network error during scraping: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"[✗] An unexpected error occurred during scraping or training: {e}", file=sys.stderr)
+            sys.exit(1)
+    # --- End Web Scraping Feature ---
+
+    # Determine the operating mode for interactive chat
     mode = 'dual'
     if args.training:
         mode = 'training'
@@ -57,11 +135,6 @@ def main():
         mode = 'dual' # Explicitly set if --dual is passed, though it's the default
 
     print(f"Atlas AI starting in {mode.upper()} mode.")
-
-    # Load configuration
-    config = load_config(args.config)
-
-    brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl", config=config)
     print("Welcome to Atlas! Type 'quit' or 'exit' to save and exit.")
 
     interaction_count = 0

@@ -42,6 +42,9 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 -   Python 3.8+
 -   `numpy`
 -   `pyyaml`
+-   `requests` (for web scraping)
+-   `beautifulsoup4` (for web scraping)
+-   `lxml` (recommended for `beautifulsoup4` parsing)
 
 ### Installation
 
@@ -78,6 +81,32 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
     ```bash
     python main.py --production
     ```
+
+### Web Scraping Training
+
+Atlas can also learn directly from web content. Use the `--scraping` argument followed by a URL to fetch, sanitize, and train the model with the text from a webpage.
+
+**Important Considerations:**
+-   **`robots.txt` Compliance**: The script will first check the target website's `robots.txt` file. If scraping the specified URL is disallowed for `User-agent: AtlasBot` or `User-agent: *`, the process will be halted. If `robots.txt` is not found, scraping is assumed to be allowed.
+-   **User Confirmation**: After a successful `robots.txt` check, you will be prompted to confirm whether you wish to proceed with scraping and training.
+-   **Text Extraction**: The script intelligently extracts the main article or post content, removing boilerplate like navigation, ads, and comments.
+-   **Training Process**: The extracted and sanitized text is then fed to the Atlas model in chunks for training. This process may take some time for very large pages.
+-   **Model Saving**: After training from the scraped content, the model will be automatically saved.
+
+**Example Usage:**
+```bash
+python main.py --scraping https://blog.codewithbotina.com/es/posts/recreacion-moderna-de-pac-man-aprende-a-desarrollar-juegos-cross-platform-con-net-y-avalonia-ui
+```
+Expected output:
+```
+[✓] Attempting to scrape and train from: https://blog.codewithbotina.com/es/posts/recreacion-moderna-de-pac-man-aprende-a-desarrollar-juegos-cross-platform-con-net-y-avalonia-ui
+[✓] Successfully fetched and parsed robots.txt from https://blog.codewithbotina.com/robots.txt.
+[✓] robots.txt check passed. Scraping of https://blog.codewithbotina.com/es/posts/recreacion-moderna-de-pac-man-aprende-a-desarrollar-juegos-cross-platform-con-net-y-avalonia-ui is allowed.
+Do you want to scrape this page and train the AI? (y/n): y
+[✓] Scraping and sanitizing text... (This may take a moment)
+[✓] Training Atlas with the new content... (This may take a moment)
+[✓] Training complete! Model saved. Exiting.
+```
 
 ### Configuration
 
@@ -168,6 +197,8 @@ This continuous learning process allows Atlas to adapt to your conversational st
     -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
     -   `grammar.py`: Contains the `GrammarHelper` class for post-processing generated responses to improve readability and structure.
     -   `config_loader.py`: Module to load and manage the `config.yaml` file.
+-   `web_scraper.py`: Contains functions for checking `robots.txt` and scraping web content.
+-   `text_processor.py`: Handles HTML parsing and text sanitization.
 -   `requirements.txt`: Lists Python dependencies.
 -   `README.md`: This file.
 -   `tests/`: Unit tests for the components.
