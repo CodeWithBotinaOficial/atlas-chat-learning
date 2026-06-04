@@ -1,25 +1,25 @@
 model:
-  embed_dim: 32
-  num_heads: 2
-  ff_dim: 64
-  num_layers: 2
-  max_seq_len: 50
+  embed_dim: 128
+  num_heads: 4
+  ff_dim: 512
+  num_layers: 4
+  max_seq_len: 256
   dropout_rate: 0.1
 
 training:
-  learning_rate: 0.001
+  learning_rate: 0.0005
   lr_decay_rate: 0.95
   lr_decay_steps: 100
-  replay_buffer_size: 10
+  replay_buffer_size: 100
   replay_sample_rate: 0.3
 
 generation:
-  temperature: 0.8
+  temperature: 0.7
   repetition_penalty: 1.2
   top_k: 20
   top_p: 0.9
-  beam_width: 0
-  max_new_tokens: 20
+  beam_width: 3
+  max_new_tokens: 150
 
 memory:
-  max_history_length: 5
+  max_history_length: 10

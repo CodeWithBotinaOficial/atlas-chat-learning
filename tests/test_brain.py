@@ -8,6 +8,36 @@ from atlas.brain import AtlasBrain
 TEST_MODEL_PATH = "test_atlas_model.npz"
 TEST_VOCAB_PATH = "test_atlas_vocab.pkl"
 
+# Define a default test configuration to ensure deterministic test results
+DEFAULT_TEST_CONFIG = {
+    'model': {
+        'embed_dim': 32,
+        'num_heads': 2,
+        'ff_dim': 64,
+        'num_layers': 2,
+        'max_seq_len': 50,
+        'dropout_rate': 0.1
+    },
+    'training': {
+        'learning_rate': 0.001,
+        'lr_decay_rate': 0.95,
+        'lr_decay_steps': 100,
+        'replay_buffer_size': 10,
+        'replay_sample_rate': 0.3
+    },
+    'generation': {
+        'temperature': 0.8,
+        'repetition_penalty': 1.2,
+        'top_k': 20,
+        'top_p': 0.9,
+        'beam_width': 0,
+        'max_new_tokens': 20
+    },
+    'memory': {
+        'max_history_length': 5
+    }
+}
+
 
 @pytest.fixture(autouse=True)
 def cleanup_files():
@@ -20,7 +50,8 @@ def cleanup_files():
 
 
 def test_brain_initialization():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    # Pass the default test config to ensure deterministic initialization
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     assert brain.vocab_size > 0
     assert "<PAD>" in brain.word_to_idx
     assert "<UNK>" in brain.word_to_idx
@@ -29,35 +60,44 @@ def test_brain_initialization():
     assert brain.transformer is not None
     assert brain.transformer.vocab_size == brain.vocab_size
 
-    # Assert new hyperparameters (updated to match atlas/brain.py)
-    assert brain.embed_dim == 32
-    assert brain.num_heads == 2
-    assert brain.ff_dim == 64
-    assert brain.num_layers == 2
-    assert brain.max_seq_len == 50
-    assert brain.learning_rate == 0.001 # Updated to match the new value
-    assert brain.dropout_rate == 0.1
-    assert brain.transformer.dropout_rate == 0.1 # Ensure transformer also gets it
+    # Assert hyperparameters based on DEFAULT_TEST_CONFIG
+    assert brain.embed_dim == DEFAULT_TEST_CONFIG['model']['embed_dim']
+    assert brain.num_heads == DEFAULT_TEST_CONFIG['model']['num_heads']
+    assert brain.ff_dim == DEFAULT_TEST_CONFIG['model']['ff_dim']
+    assert brain.num_layers == DEFAULT_TEST_CONFIG['model']['num_layers']
+    assert brain.max_seq_len == DEFAULT_TEST_CONFIG['model']['max_seq_len']
+    assert brain.dropout_rate == DEFAULT_TEST_CONFIG['model']['dropout_rate']
+    assert brain.transformer.dropout_rate == DEFAULT_TEST_CONFIG['model']['dropout_rate']
 
-    # Assert new memory components
+    assert brain.learning_rate == DEFAULT_TEST_CONFIG['training']['learning_rate']
+    assert brain.lr_decay_rate == DEFAULT_TEST_CONFIG['training']['lr_decay_rate']
+    assert brain.lr_decay_steps == DEFAULT_TEST_CONFIG['training']['lr_decay_steps']
+    assert brain.replay_buffer_size == DEFAULT_TEST_CONFIG['training']['replay_buffer_size']
+    assert brain.replay_sample_rate == DEFAULT_TEST_CONFIG['training']['replay_sample_rate']
+
+    assert brain.temperature == DEFAULT_TEST_CONFIG['generation']['temperature']
+    assert brain.repetition_penalty == DEFAULT_TEST_CONFIG['generation']['repetition_penalty']
+    assert brain.top_k == DEFAULT_TEST_CONFIG['generation']['top_k']
+    assert brain.top_p == DEFAULT_TEST_CONFIG['generation']['top_p']
+    assert brain.beam_width == DEFAULT_TEST_CONFIG['generation']['beam_width']
+    assert brain.max_new_tokens == DEFAULT_TEST_CONFIG['generation']['max_new_tokens']
+
+    # Assert memory components
     assert brain.conversation_history == []
-    assert brain.max_history_length == 5
+    assert brain.max_history_length == DEFAULT_TEST_CONFIG['memory']['max_history_length']
     assert brain.replay_buffer == []
-    assert brain.replay_buffer_size == 10
     assert brain.interaction_count == 0
-    assert brain.lr_decay_rate == 0.95
-    assert brain.lr_decay_steps == 100
 
 
 def test_brain_tokenize():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     text = "Hello, world! How are you?"
     tokens = brain._tokenize(text)
     assert tokens == ["hello", "world", "how", "are", "you"]
 
 
 def test_brain_words_to_ids_and_dynamic_vocab_growth():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     initial_vocab_size = brain.vocab_size
 
     words = ["apple", "banana", "apple"]
@@ -71,7 +111,7 @@ def test_brain_words_to_ids_and_dynamic_vocab_growth():
 
 
 def test_brain_learn_updates_model():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
 
     # Capture initial state of a parameter (e.g., token embedding)
     initial_embedding = np.copy(brain.transformer.token_embedding)
@@ -88,14 +128,14 @@ def test_brain_learn_updates_model():
 
 
 def test_brain_respond_initial_message():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     # If only special tokens, it should return the learning message
     response = brain.respond()
     assert "I'm learning to speak" in response
 
 
 def test_brain_respond_after_learning():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
 
     # Teach it a simple pattern
     brain.learn("hello world")
@@ -124,7 +164,7 @@ def test_brain_respond_after_learning():
 
 def test_brain_save_load():
     # Create a brain, teach it something, and save
-    brain1 = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain1 = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     brain1.learn("this is a test sentence")
     brain1.learn("another test for saving")
     # Simulate a conversation turn to populate history
@@ -146,7 +186,8 @@ def test_brain_save_load():
     learning_rate1 = brain1.learning_rate # Base learning rate
 
     # Create a new brain and load
-    brain2 = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    # Pass the same config to ensure consistent initialization before loading
+    brain2 = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     # Load is called in __init__, so it should load the saved state
 
     # Assert that loaded state matches saved state
@@ -175,7 +216,8 @@ def test_brain_load_non_existent_files():
     if os.path.exists(TEST_VOCAB_PATH):
         os.remove(TEST_VOCAB_PATH)
 
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    # Pass the default test config
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     # Should initialize with default vocab and transformer
     assert brain.vocab_size == len(brain.SPECIAL_TOKENS)
     assert brain.transformer.vocab_size == len(brain.SPECIAL_TOKENS)
@@ -184,8 +226,11 @@ def test_brain_load_non_existent_files():
 
 
 def test_brain_max_seq_len_truncation():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
-    brain.max_seq_len = 5  # Set a very small max_seq_len for testing
+    # Create a custom config for this test to override max_seq_len
+    test_config_for_truncation = DEFAULT_TEST_CONFIG.copy()
+    test_config_for_truncation['model'] = DEFAULT_TEST_CONFIG['model'].copy()
+    test_config_for_truncation['model']['max_seq_len'] = 5 
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=test_config_for_truncation)
 
     long_text = "this is a very very very very very very very very very very long sentence"
 
@@ -205,7 +250,7 @@ def test_brain_max_seq_len_truncation():
 
 
 def test_brain_empty_input_to_learn():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     initial_embedding = np.copy(brain.transformer.token_embedding)
     initial_interaction_count = brain.interaction_count
 
@@ -221,7 +266,7 @@ def test_brain_empty_input_to_learn():
 
 
 def test_brain_respond_with_empty_prompt():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
     brain.learn("hello world")  # Teach it something
     response = brain.respond(prompt="")
     assert isinstance(response, str)
@@ -234,8 +279,11 @@ def test_brain_respond_with_empty_prompt():
     assert "I'm learning to speak" not in response
 
 def test_conversation_history_truncation():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
-    brain.max_history_length = 2 # Set a small history length for testing
+    # Create a custom config for this test to override max_history_length
+    test_config_for_history = DEFAULT_TEST_CONFIG.copy()
+    test_config_for_history['memory'] = DEFAULT_TEST_CONFIG['memory'].copy()
+    test_config_for_history['memory']['max_history_length'] = 2 
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=test_config_for_history)
 
     # Simulate conversation turns
     user_msg_1 = "user message 1"
@@ -274,8 +322,11 @@ def test_conversation_history_truncation():
 
 
 def test_replay_buffer_management():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
-    brain.replay_buffer_size = 3
+    # Create a custom config for this test to override replay_buffer_size
+    test_config_for_replay = DEFAULT_TEST_CONFIG.copy()
+    test_config_for_replay['training'] = DEFAULT_TEST_CONFIG['training'].copy()
+    test_config_for_replay['training']['replay_buffer_size'] = 3
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=test_config_for_replay)
 
     for i in range(5):
         brain.learn(f"message {i+1} tokens") # Ensure message is long enough
@@ -295,26 +346,30 @@ def test_replay_buffer_management():
     assert "message 5 tokens" in brain._detokenize(input_ids_3)
 
 def test_learning_rate_decay():
-    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH)
-    initial_lr = brain.learning_rate
-    brain.lr_decay_steps = 2 # Decay every 2 interactions
-    brain.lr_decay_rate = 0.5 # Halve LR
+    # Create a custom config for this test to override LR decay parameters
+    test_config_for_lr_decay = DEFAULT_TEST_CONFIG.copy()
+    test_config_for_lr_decay['training'] = DEFAULT_TEST_CONFIG['training'].copy()
+    test_config_for_lr_decay['training']['lr_decay_steps'] = 2 # Decay every 2 interactions
+    test_config_for_lr_decay['training']['lr_decay_rate'] = 0.5 # Halve LR
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=test_config_for_lr_decay)
 
+    initial_lr = brain.learning_rate
+    
     # 0 interactions: LR = initial_lr
     # 1 interaction: LR = initial_lr
-    brain.learn("test message") # Changed to "test message"
+    brain.learn("test message") 
     assert brain.interaction_count == 1
     # The actual LR used in train_step is internal, but we can check the interaction count
     # and assume the formula is applied.
 
     # 2 interactions: LR = initial_lr * 0.5
-    brain.learn("test message") # Changed to "test message"
+    brain.learn("test message") 
     assert brain.interaction_count == 2
 
     # 3 interactions: LR = initial_lr * 0.5
-    brain.learn("test message") # Changed to "test message"
+    brain.learn("test message") 
     assert brain.interaction_count == 3
 
     # 4 interactions: LR = initial_lr * 0.5 * 0.5
-    brain.learn("test message") # Changed to "test message"
+    brain.learn("test message")
     assert brain.interaction_count == 4
