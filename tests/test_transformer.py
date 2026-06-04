@@ -7,8 +7,30 @@ from atlas.brain import AtlasBrain  # Import AtlasBrain to get special token IDs
 
 
 # --- Helper functions for testing ---
+def _create_dummy_transformer_config(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0):
+    return {
+        'vocab_size': vocab_size,
+        'model': {
+            'embed_dim': embed_dim,
+            'num_heads': num_heads,
+            'ff_dim': ff_dim,
+            'num_layers': num_layers,
+            'max_seq_len': max_seq_len,
+            'dropout_rate': dropout_rate,
+        },
+        'generation': {
+            'temperature': 0.8,
+            'repetition_penalty': 1.2,
+            'top_k': 20,
+            'top_p': 0.9,
+            'beam_width': 0,
+            'max_new_tokens': 20,
+        }
+    }
+
 def _create_dummy_transformer(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0):
-    return Transformer(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate)
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate)
+    return Transformer(config)
 
 
 # --- PositionalEncoding Tests ---
@@ -246,7 +268,7 @@ def test_transformer_generate_returns_tokens():
 
     # Use BOS_TOKEN_ID from AtlasBrain for consistency
     prompt_tokens = np.array([[AtlasBrain.BOS_TOKEN_ID]])
-    generated_tokens = transformer.generate(prompt_tokens, max_new_tokens=5, eos_token_id=AtlasBrain.EOS_TOKEN_ID)
+    generated_tokens = transformer.generate(prompt_tokens, eos_token_id=AtlasBrain.EOS_TOKEN_ID)
 
     assert isinstance(generated_tokens, np.ndarray)
     assert generated_tokens.ndim == 1
@@ -256,7 +278,7 @@ def test_transformer_generate_returns_tokens():
 def test_generate_non_empty():
     transformer = _create_dummy_transformer()
     prompt_tokens = np.array([[AtlasBrain.BOS_TOKEN_ID]])
-    generated_tokens = transformer.generate(prompt_tokens, max_new_tokens=1, eos_token_id=AtlasBrain.EOS_TOKEN_ID)
+    generated_tokens = transformer.generate(prompt_tokens, eos_token_id=AtlasBrain.EOS_TOKEN_ID)
     # The generated sequence should always contain at least the prompt token(s)
     # and potentially one new token before EOS.
     assert len(generated_tokens) >= len(prompt_tokens[0])
@@ -272,7 +294,8 @@ def test_transformer_learning_reduces_loss():
     max_seq_len = 5
     learning_rate = 0.1  # Higher LR for faster convergence in test
 
-    transformer = Transformer(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    transformer = Transformer(config)
 
     # Simple repeating pattern for training
     # Input: [1, 2, 3, 1] -> Target: [2, 3, 1, 2]
@@ -300,7 +323,8 @@ def test_transformer_learning_reduces_loss():
 
 
 def test_transformer_update_vocab_size():
-    transformer = _create_dummy_transformer(vocab_size=10)
+    config = _create_dummy_transformer_config(vocab_size=10)
+    transformer = Transformer(config)
     initial_vocab_size = transformer.vocab_size
 
     # Make copies of initial weights to compare against
@@ -412,19 +436,21 @@ def test_transformer_generate_beam_search():
     ff_dim = 32
     num_layers = 1
     max_seq_len = 10
-    transformer = _create_dummy_transformer(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    # Override beam_width for this specific test
+    config['generation']['beam_width'] = 2
+    config['generation']['max_new_tokens'] = 5
+
+    transformer = Transformer(config)
 
     prompt_tokens = np.array([[AtlasBrain.BOS_TOKEN_ID]])
-    max_new_tokens = 5
-    beam_width = 2
 
     # For this test, we mostly want to ensure it runs and produces a sequence
     # The actual content is hard to predict without a trained model.
     generated_tokens = transformer.generate(
         prompt_tokens,
-        max_new_tokens=max_new_tokens,
         eos_token_id=AtlasBrain.EOS_TOKEN_ID,
-        beam_width=beam_width
     )
 
     assert isinstance(generated_tokens, np.ndarray)
@@ -433,7 +459,7 @@ def test_transformer_generate_beam_search():
     # The generated sequence should start with the prompt token
     assert generated_tokens[0] == AtlasBrain.BOS_TOKEN_ID
     # The length should be at most max_new_tokens + len(prompt)
-    assert len(generated_tokens) <= max_new_tokens + len(prompt_tokens[0])
+    assert len(generated_tokens) <= config['generation']['max_new_tokens'] + len(prompt_tokens[0])
     # If EOS is generated, it should be the last token
     if AtlasBrain.EOS_TOKEN_ID in generated_tokens:
         assert generated_tokens[-1] == AtlasBrain.EOS_TOKEN_ID
@@ -447,7 +473,8 @@ def test_transformer_nan_stability_during_training():
     max_seq_len = 5
     learning_rate = 0.001 # Use the new, lower learning rate
 
-    transformer = Transformer(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len)
+    transformer = Transformer(config)
 
     # Simple repeating pattern for training
     input_sequence = np.array([[1, 2, 3, 1]])

@@ -11,6 +11,7 @@ from atlas.brain import AtlasBrain
 import sys
 import os
 import argparse
+from atlas.config_loader import load_config # Import load_config
 
 # --- Readline setup for command history and arrow key navigation ---
 try:
@@ -43,6 +44,7 @@ def main():
     parser.add_argument('--training', action='store_true', help='Only learn from input, do not generate responses.')
     parser.add_argument('--production', action='store_true', help='Only generate responses, do not learn.')
     parser.add_argument('--dual', action='store_true', help='Both learn and generate responses (default).')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to the configuration YAML file.')
     args = parser.parse_args()
 
     # Determine the operating mode
@@ -56,7 +58,10 @@ def main():
 
     print(f"Atlas AI starting in {mode.upper()} mode.")
 
-    brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl")
+    # Load configuration
+    config = load_config(args.config)
+
+    brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl", config=config)
     print("Welcome to Atlas! Type 'quit' or 'exit' to save and exit.")
 
     interaction_count = 0

@@ -575,22 +575,31 @@ class Transformer:
     A small Transformer model for sequence-to-sequence tasks.
     """
 
-    def __init__(self, vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate=0.0):
-        self.vocab_size = vocab_size
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.ff_dim = ff_dim
-        self.num_layers = num_layers
-        self.max_seq_len = max_seq_len
-        self.dropout_rate = dropout_rate
+    def __init__(self, config):
+        self.vocab_size = config['vocab_size']
+        self.embed_dim = config['model']['embed_dim']
+        self.num_heads = config['model']['num_heads']
+        self.ff_dim = config['model']['ff_dim']
+        self.num_layers = config['model']['num_layers']
+        self.max_seq_len = config['model']['max_seq_len']
+        self.dropout_rate = config['model']['dropout_rate']
 
-        self.token_embedding = xavier_init(vocab_size, embed_dim)
-        self.positional_encoding = PositionalEncoding(embed_dim, max_seq_len)
+        # Generation parameters
+        self.temperature = config['generation']['temperature']
+        self.repetition_penalty = config['generation']['repetition_penalty']
+        self.top_k = config['generation']['top_k']
+        self.top_p = config['generation']['top_p']
+        self.beam_width = config['generation']['beam_width']
+        self.max_new_tokens = config['generation']['max_new_tokens']
+
+
+        self.token_embedding = xavier_init(self.vocab_size, self.embed_dim)
+        self.positional_encoding = PositionalEncoding(self.embed_dim, self.max_seq_len)
         self.transformer_blocks = [
-            TransformerBlock(embed_dim, num_heads, ff_dim, dropout_rate) for _ in range(num_layers)
+            TransformerBlock(self.embed_dim, self.num_heads, self.ff_dim, self.dropout_rate) for _ in range(self.num_layers)
         ]
-        self.output_layer = xavier_init(embed_dim, vocab_size)
-        self.output_bias = np.zeros(vocab_size)
+        self.output_layer = xavier_init(self.embed_dim, self.vocab_size)
+        self.output_bias = np.zeros(self.vocab_size)
 
         # Collect all parameters into a single dictionary for easy access and saving
         self.params = {
@@ -792,14 +801,14 @@ class Transformer:
                 if k in block.feed_forward.params and f'block_{i}_ff_{k}' in all_grads:
                     block.feed_forward.params[k] -= learning_rate * all_grads[f'block_{i}_ff_{k}']
 
-    def _beam_search_generate(self, prompt_tokens, max_new_tokens, temperature, repetition_penalty, pad_token_id, eos_token_id, beam_width):
+    def _beam_search_generate(self, prompt_tokens, pad_token_id, eos_token_id):
         """
         Generates tokens using beam search.
         """
         # Beams are (log_probability, sequence_of_token_ids)
         beams = [(0.0, list(prompt_tokens[0]))]
         
-        for _ in range(max_new_tokens):
+        for _ in range(self.max_new_tokens):
             all_candidates = []
             for log_prob, current_sequence in beams:
                 if current_sequence[-1] == eos_token_id:
@@ -811,13 +820,13 @@ class Transformer:
                 input_tensor = np.array(input_seq).reshape(1, -1)
 
                 output_logits = self.forward(input_tensor, training=False)
-                last_token_logits = output_logits[0, -1, :] / temperature
+                last_token_logits = output_logits[0, -1, :] / self.temperature
 
-                if repetition_penalty > 1.0:
+                if self.repetition_penalty > 1.0:
                     unique_current_tokens = np.unique([t for t in current_sequence if t != pad_token_id])
                     for token_id in unique_current_tokens:
                         if 0 <= token_id < self.vocab_size:
-                            last_token_logits[token_id] /= repetition_penalty
+                            last_token_logits[token_id] /= self.repetition_penalty
 
                 probabilities = softmax(last_token_logits[np.newaxis, :])[0]
                 
@@ -832,7 +841,7 @@ class Transformer:
 
                 # Get top beam_width candidates for the next token
                 # Ensure indices are within vocab_size, which they should be if last_token_logits is vocab_size long
-                top_token_indices = np.argsort(probabilities)[::-1][:beam_width]
+                top_token_indices = np.argsort(probabilities)[::-1][:self.beam_width]
 
                 for next_token_id in top_token_indices:
                     new_log_prob = log_prob + np.log(probabilities[next_token_id])
@@ -840,7 +849,7 @@ class Transformer:
                     all_candidates.append((new_log_prob, new_sequence))
             
             # Sort all candidates by log probability and select top beam_width
-            beams = sorted(all_candidates, key=lambda x: x[0], reverse=True)[:beam_width]
+            beams = sorted(all_candidates, key=lambda x: x[0], reverse=True)[:self.beam_width]
 
             # If all beams have ended, stop early
             if all(b[1][-1] == eos_token_id for b in beams):
@@ -850,29 +859,21 @@ class Transformer:
         return np.array(beams[0][1])
 
 
-    def generate(self, prompt_tokens, max_new_tokens=15, temperature=0.8, repetition_penalty=1.0, pad_token_id=0,
-                 eos_token_id=3, top_k=0, top_p=1.0, beam_width=0):
+    def generate(self, prompt_tokens, pad_token_id=0, eos_token_id=3):
         """
         Generates new tokens based on a prompt using various sampling strategies.
         prompt_tokens: (1, seq_len) - initial token IDs.
-        max_new_tokens: int - maximum number of tokens to generate.
-        temperature: float - controls randomness. Higher means more random.
-        repetition_penalty: float - penalizes tokens that have already appeared. > 1.0 to penalize.
         pad_token_id: int - ID of the padding token.
         eos_token_id: int - ID of the end-of-sequence token.
-        top_k: int - if > 0, only consider the top_k most likely tokens.
-        top_p: float - if < 1.0, only consider tokens whose cumulative probability
-                       exceeds top_p.
-        beam_width: int - if > 0, use beam search with this width. Otherwise, use sampling.
         Returns: np.ndarray - array of generated token IDs.
         """
-        if beam_width > 0:
-            return self._beam_search_generate(prompt_tokens, max_new_tokens, temperature, repetition_penalty, pad_token_id, eos_token_id, beam_width)
+        if self.beam_width > 0:
+            return self._beam_search_generate(prompt_tokens, pad_token_id, eos_token_id)
 
         generated_tokens = list(prompt_tokens[0])
         batch_size = 1  # Generation is always batch size 1
 
-        for _ in range(max_new_tokens):
+        for _ in range(self.max_new_tokens):
             current_seq_len = len(generated_tokens)
             if current_seq_len == 0:
                 break
@@ -887,15 +888,15 @@ class Transformer:
             # Get logits for the last token in the sequence
             last_token_logits = output_logits[0, -1, :]
 
-            if repetition_penalty > 1.0:
+            if self.repetition_penalty > 1.0:
                 # Apply repetition penalty
                 unique_current_tokens = np.unique([t for t in generated_tokens if t != pad_token_id])
                 for token_id in unique_current_tokens:
                     if 0 <= token_id < self.vocab_size:
-                        last_token_logits[token_id] /= repetition_penalty
+                        last_token_logits[token_id] /= self.repetition_penalty
 
             # Sample next token using top-k and top-p
-            next_token = _top_k_top_p_sampling(last_token_logits, self.vocab_size, top_k, top_p, temperature)
+            next_token = _top_k_top_p_sampling(last_token_logits, self.vocab_size, self.top_k, self.top_p, self.temperature)
             
             generated_tokens.append(next_token)
 

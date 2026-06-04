@@ -41,6 +41,7 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 
 -   Python 3.8+
 -   `numpy`
+-   `pyyaml`
 
 ### Installation
 
@@ -77,6 +78,49 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
     ```bash
     python main.py --production
     ```
+
+### Configuration
+
+Atlas uses a `config.yaml` file to manage its hyperparameters. A default `config.yaml` is provided in the project root.
+
+You can specify a custom configuration file using the `--config` argument:
+```bash
+python main.py --config my_custom_config.yaml
+```
+
+If `config.yaml` is not found, a default one will be generated, and Atlas will exit, prompting you to review and restart.
+
+The `config.yaml` structure includes:
+
+```yaml
+model:
+  embed_dim: 32          # Dimension of token embeddings
+  num_heads: 2           # Number of attention heads
+  ff_dim: 64             # Dimension of the feed-forward network
+  num_layers: 2          # Number of transformer blocks
+  max_seq_len: 50        # Maximum sequence length for input/output
+  dropout_rate: 0.1      # Dropout rate for regularization
+
+training:
+  learning_rate: 0.001   # Initial learning rate
+  lr_decay_rate: 0.95    # Rate at which learning rate decays
+  lr_decay_steps: 100    # Number of interactions after which LR decays
+  replay_buffer_size: 10 # Size of the replay buffer for experience replay
+  replay_sample_rate: 0.3 # Probability of sampling from replay buffer during training
+
+generation:
+  temperature: 0.8       # Controls randomness in sampling (higher = more random)
+  repetition_penalty: 1.2 # Penalizes repeating tokens
+  top_k: 20              # Only consider top_k tokens for sampling
+  top_p: 0.9             # Only consider tokens whose cumulative probability exceeds top_p
+  beam_width: 0          # If > 0, use beam search with this width (0 for greedy/sampling)
+  max_new_tokens: 20     # Maximum number of new tokens to generate in a response
+
+memory:
+  max_history_length: 5  # Number of past conversation turns to keep in memory
+```
+
+**Important**: After modifying `config.yaml`, you need to restart Atlas for the changes to take effect.
 
 ## Pre-trained Model (Optional)
 
@@ -117,11 +161,13 @@ This continuous learning process allows Atlas to adapt to your conversational st
 
 ## Project Structure
 
--   `main.py`: The main script to run the chatbot, now with argument parsing for execution modes.
+-   `main.py`: The main script to run the chatbot, now with argument parsing for execution modes and config path.
+-   `config.yaml`: Configuration file for hyperparameters.
 -   `atlas/`: Contains the core logic.
     -   `brain.py`: Manages the chatbot's overall logic, including tokenization, vocabulary management, conversation history, replay buffer, and orchestrating the Transformer.
     -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
     -   `grammar.py`: Contains the `GrammarHelper` class for post-processing generated responses to improve readability and structure.
+    -   `config_loader.py`: Module to load and manage the `config.yaml` file.
 -   `requirements.txt`: Lists Python dependencies.
 -   `README.md`: This file.
 -   `tests/`: Unit tests for the components.

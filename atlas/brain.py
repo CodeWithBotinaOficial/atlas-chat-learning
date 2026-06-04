@@ -8,6 +8,7 @@ import random
 
 from atlas.transformer import Transformer, softmax, label_smoothing_loss
 from atlas.grammar import GrammarHelper # Import GrammarHelper
+from atlas.config_loader import load_config # Import load_config
 
 
 class AtlasBrain:
@@ -21,9 +22,14 @@ class AtlasBrain:
     BOS_TOKEN_ID = 2
     EOS_TOKEN_ID = 3
 
-    def __init__(self, model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl"):
+    def __init__(self, model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl", config=None):
         self.model_path = model_path
         self.vocab_path = vocab_path
+
+        if config is None:
+            self.config = load_config()
+        else:
+            self.config = config
 
         self.word_to_idx = {}
         self.idx_to_word = {}
@@ -33,43 +39,51 @@ class AtlasBrain:
         for token in self.SPECIAL_TOKENS:
             self._add_word_to_vocab(token)
 
-        # Transformer hyperparameters (reduced for stability)
-        self.embed_dim = 32
-        self.num_heads = 2
-        self.ff_dim = 64
-        self.num_layers = 2
-        self.max_seq_len = 50 # Reduced max_seq_len
-        self.learning_rate = 0.001 # Reduced base learning rate
-        self.dropout_rate = 0.1
-        self.repetition_penalty = 1.2  # A small penalty to discourage immediate repetition
+        # Transformer hyperparameters from config
+        self.embed_dim = self.config['model']['embed_dim']
+        self.num_heads = self.config['model']['num_heads']
+        self.ff_dim = self.config['model']['ff_dim']
+        self.num_layers = self.config['model']['num_layers']
+        self.max_seq_len = self.config['model']['max_seq_len']
+        self.dropout_rate = self.config['model']['dropout_rate']
+
+        # Training hyperparameters from config
+        self.learning_rate = self.config['training']['learning_rate']
+        self.lr_decay_rate = self.config['training']['lr_decay_rate']
+        self.lr_decay_steps = self.config['training']['lr_decay_steps']
+        self.replay_buffer_size = self.config['training']['replay_buffer_size']
+        self.replay_sample_rate = self.config['training']['replay_sample_rate']
+
+        # Generation hyperparameters from config
+        self.temperature = self.config['generation']['temperature']
+        self.repetition_penalty = self.config['generation']['repetition_penalty']
+        self.top_k = self.config['generation']['top_k']
+        self.top_p = self.config['generation']['top_p']
+        self.beam_width = self.config['generation']['beam_width']
+        self.max_new_tokens = self.config['generation']['max_new_tokens']
+
+        # Memory hyperparameters from config
+        self.max_history_length = self.config['memory']['max_history_length']
+
+        # NaN check frequency (not in config, keep as default or add to config if desired)
+        self.nan_check_interval = 10 # Check every 10 interactions
 
         # Conversation history buffer
         self.conversation_history = []  # Stores (user_message_ids, atlas_response_ids)
-        self.max_history_length = 5  # Keep last 5 exchanges
 
         # Replay buffer for incremental learning
         self.replay_buffer = []  # Stores (input_ids, target_ids) for past user messages
-        self.replay_buffer_size = 10
-        self.replay_sample_rate = 0.3  # Probability of sampling from replay buffer
 
         # Learning rate decay
         self.interaction_count = 0
-        self.lr_decay_rate = 0.95
-        self.lr_decay_steps = 100
 
-        # NaN check frequency
-        self.nan_check_interval = 10 # Check every 10 interactions
-
-        # Initialize Transformer with current vocab_size
-        self.transformer = Transformer(
-            vocab_size=self.vocab_size,
-            embed_dim=self.embed_dim,
-            num_heads=self.num_heads,
-            ff_dim=self.ff_dim,
-            num_layers=self.num_layers,
-            max_seq_len=self.max_seq_len,
-            dropout_rate=self.dropout_rate
-        )
+        # Initialize Transformer with current vocab_size and config
+        transformer_config = {
+            'vocab_size': self.vocab_size,
+            'model': self.config['model'],
+            'generation': self.config['generation']
+        }
+        self.transformer = Transformer(transformer_config)
 
         self.load()  # Attempt to load existing model and vocab
 
@@ -162,15 +176,12 @@ class AtlasBrain:
         
         if nan_found:
             # Reinitialize the entire transformer
-            self.transformer = Transformer(
-                vocab_size=self.vocab_size,
-                embed_dim=self.embed_dim,
-                num_heads=self.num_heads,
-                ff_dim=self.ff_dim,
-                num_layers=self.num_layers,
-                max_seq_len=self.max_seq_len,
-                dropout_rate=self.dropout_rate
-            )
+            transformer_config = {
+                'vocab_size': self.vocab_size,
+                'model': self.config['model'],
+                'generation': self.config['generation']
+            }
+            self.transformer = Transformer(transformer_config)
             # Ensure vocab size is updated for the new transformer
             self.transformer.update_vocab_size(self.vocab_size)
             print("Model reinitialized due to NaN/Inf weights.")
@@ -257,14 +268,8 @@ class AtlasBrain:
 
         response_tokens_ids = self.transformer.generate(
             prompt_tensor,
-            max_new_tokens=20, # Increased max_new_tokens for potentially longer responses
-            temperature=0.8,
-            repetition_penalty=self.repetition_penalty,
             pad_token_id=self.PAD_TOKEN_ID,
             eos_token_id=self.EOS_TOKEN_ID,
-            top_k=20,
-            top_p=0.9,
-            beam_width=0 # 0 means no beam search, simple sampling
         )
 
         # Decode generated tokens, stopping at EOS
@@ -317,20 +322,7 @@ class AtlasBrain:
             'conversation_history': self.conversation_history,
             'replay_buffer': self.replay_buffer,
             'interaction_count': self.interaction_count,
-            'learning_rate': self.learning_rate, # Save base LR, decay is calculated
-            'embed_dim': self.embed_dim, # Save hyperparameters
-            'num_heads': self.num_heads,
-            'ff_dim': self.ff_dim,
-            'num_layers': self.num_layers,
-            'max_seq_len': self.max_seq_len,
-            'dropout_rate': self.dropout_rate,
-            'repetition_penalty': self.repetition_penalty,
-            'max_history_length': self.max_history_length,
-            'replay_buffer_size': self.replay_buffer_size,
-            'replay_sample_rate': self.replay_sample_rate,
-            'lr_decay_rate': self.lr_decay_rate,
-            'lr_decay_steps': self.lr_decay_steps,
-            'nan_check_interval': self.nan_check_interval,
+            'config': self.config, # Save the entire config
         }
         with open(self.vocab_path, 'wb') as f:
             pickle.dump(brain_state, f)
@@ -351,34 +343,52 @@ class AtlasBrain:
                 self.conversation_history = brain_state.get('conversation_history', [])
                 self.replay_buffer = brain_state.get('replay_buffer', [])
                 self.interaction_count = brain_state.get('interaction_count', 0)
-                self.learning_rate = brain_state.get('learning_rate', self.learning_rate) # Load if exists, else keep default
+                
+                # Load config from saved state, if available, otherwise use current config
+                loaded_config = brain_state.get('config')
+                if loaded_config:
+                    # Merge loaded config with current config to handle new parameters
+                    # This prioritizes loaded values but allows new config defaults to be used
+                    def merge_configs(base, new):
+                        for k, v in new.items():
+                            if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                                base[k] = merge_configs(base[k], v)
+                            else:
+                                base[k] = v
+                        return base
+                    self.config = merge_configs(self.config, loaded_config)
 
-                # Load hyperparameters, falling back to defaults if not present in old saves
-                self.embed_dim = brain_state.get('embed_dim', self.embed_dim)
-                self.num_heads = brain_state.get('num_heads', self.num_heads)
-                self.ff_dim = brain_state.get('ff_dim', self.ff_dim)
-                self.num_layers = brain_state.get('num_layers', self.num_layers)
-                self.max_seq_len = brain_state.get('max_seq_len', self.max_seq_len)
-                self.dropout_rate = brain_state.get('dropout_rate', self.dropout_rate)
-                self.repetition_penalty = brain_state.get('repetition_penalty', self.repetition_penalty)
-                self.max_history_length = brain_state.get('max_history_length', self.max_history_length)
-                self.replay_buffer_size = brain_state.get('replay_buffer_size', self.replay_buffer_size)
-                self.replay_sample_rate = brain_state.get('replay_sample_rate', self.replay_sample_rate)
-                self.lr_decay_rate = brain_state.get('lr_decay_rate', self.lr_decay_rate)
-                self.lr_decay_steps = brain_state.get('lr_decay_steps', self.lr_decay_steps)
-                self.nan_check_interval = brain_state.get('nan_check_interval', self.nan_check_interval)
+                # Apply loaded config values
+                self.embed_dim = self.config['model']['embed_dim']
+                self.num_heads = self.config['model']['num_heads']
+                self.ff_dim = self.config['model']['ff_dim']
+                self.num_layers = self.config['model']['num_layers']
+                self.max_seq_len = self.config['model']['max_seq_len']
+                self.dropout_rate = self.config['model']['dropout_rate']
+
+                self.learning_rate = self.config['training']['learning_rate']
+                self.lr_decay_rate = self.config['training']['lr_decay_rate']
+                self.lr_decay_steps = self.config['training']['lr_decay_steps']
+                self.replay_buffer_size = self.config['training']['replay_buffer_size']
+                self.replay_sample_rate = self.config['training']['replay_sample_rate']
+
+                self.temperature = self.config['generation']['temperature']
+                self.repetition_penalty = self.config['generation']['repetition_penalty']
+                self.top_k = self.config['generation']['top_k']
+                self.top_p = self.config['generation']['top_p']
+                self.beam_width = self.config['generation']['beam_width']
+                self.max_new_tokens = self.config['generation']['max_new_tokens']
+
+                self.max_history_length = self.config['memory']['max_history_length']
 
 
             # Re-initialize transformer with loaded hyperparameters
-            self.transformer = Transformer(
-                vocab_size=self.vocab_size,
-                embed_dim=self.embed_dim,
-                num_heads=self.num_heads,
-                ff_dim=self.ff_dim,
-                num_layers=self.num_layers,
-                max_seq_len=self.max_seq_len,
-                dropout_rate=self.dropout_rate
-            )
+            transformer_config = {
+                'vocab_size': self.vocab_size,
+                'model': self.config['model'],
+                'generation': self.config['generation']
+            }
+            self.transformer = Transformer(transformer_config)
             # Update transformer's vocab size after re-initialization
             self.transformer.update_vocab_size(self.vocab_size)
 
