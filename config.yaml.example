@@ -44,7 +44,7 @@ generation:
   # Number of beams to use for beam search decoding (0 disables beam search for faster generation).
   beam_width: 0
   # Maximum number of new tokens to generate in a response.
-  max_new_tokens: 300
+  max_new_tokens: 50
   # fast_mode: false  # Use CLI flag --fast with --production for low-latency greedy decoding.
 
 # Memory management configuration parameters

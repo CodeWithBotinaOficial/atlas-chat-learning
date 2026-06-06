@@ -332,7 +332,6 @@ class AtlasBrain:
 
         # If raw_atlas_response is empty after token filtering, return a specific warning
         if not raw_atlas_response:
-            print("DEBUG: raw_atlas_response was empty after token filtering. Returning specific warning.")
             return specific_empty_response_warning
 
         # Apply grammatical post-processing

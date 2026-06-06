@@ -1090,7 +1090,6 @@ class Transformer:
         eos_token_id: int - ID of the end-of-sequence token.
         Returns: np.ndarray - array of generated token IDs.
         """
-        print(f"Generate: Prompt tokens: {prompt_tokens}, Max new tokens: {self.max_new_tokens}")
 
         # Define special_token_ids for this generation call
         special_token_ids = {pad_token_id, self._unk_token_id, self._bos_token_id, eos_token_id}
@@ -1143,12 +1142,10 @@ class Transformer:
                 special_token_ids=special_token_ids
             )
             
-            print(f"  Generated token ID at step {step}: {next_token}")
             generated_tokens.append(next_token)
 
             # Stop if EOS token is generated
             if next_token == eos_token_id:
-                print(f"  EOS token ({eos_token_id}) generated. Stopping generation.")
                 break
 
         # Ensure at least one new token is generated if the loop didn't add any
@@ -1180,5 +1177,4 @@ class Transformer:
                 print("  last_token_logits was None. Appending UNK token.")
                 generated_tokens.append(self._unk_token_id) # Fallback to UNK token
 
-        print(f"Generate: Final generated tokens: {generated_tokens}")
         return np.array(generated_tokens)
