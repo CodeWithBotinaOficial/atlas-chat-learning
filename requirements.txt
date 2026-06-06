@@ -8,7 +8,9 @@ numpy==2.4.6
 packaging==26.2
 pluggy==1.6.0
 Pygments==2.20.0
+pypdf==6.13.0
 pytest==9.0.3
+python-docx==1.2.0
 PyYAML==6.0.3
 requests==2.34.2
 soupsieve==2.8.4

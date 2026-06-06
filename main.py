@@ -45,24 +45,125 @@ except Exception as e:
 
 MAX_CHUNK_SIZE = 1000 # Max characters per chunk for training
 
+
+def chunk_text_for_training(text, max_chunk_size=MAX_CHUNK_SIZE):
+    """
+    Split text into chunks for training, respecting word boundaries.
+    """
+    words = text.split()
+    current_chunk = []
+    current_chunk_len = 0
+    chunks = []
+
+    for word in words:
+        separator_len = 1 if current_chunk else 0
+        if current_chunk and current_chunk_len + separator_len + len(word) > max_chunk_size:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [word]
+            current_chunk_len = len(word)
+        else:
+            current_chunk.append(word)
+            current_chunk_len += separator_len + len(word)
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
+    return chunks
+
+
+def train_brain_from_text(brain, text, source_label):
+    """
+    Chunk extracted text and feed each chunk to brain.learn().
+    """
+    print("[✓] Chunking text for training...")
+    chunks = chunk_text_for_training(text)
+    if not chunks:
+        print("[✗] No trainable text chunks found after processing.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"[✓] Training Atlas with {len(chunks)} chunk(s)... (This may take a moment)")
+    learned_chunks = 0
+    skipped_chunks = 0
+
+    for index, chunk in enumerate(chunks, start=1):
+        result = brain.learn(chunk)
+        if result is not None:
+            learned_chunks += 1
+            print(f"[✓] Trained chunk {index}/{len(chunks)}")
+        else:
+            skipped_chunks += 1
+            print(f"[!] Skipped chunk {index}/{len(chunks)} (too short or invalid)")
+
+    if learned_chunks == 0:
+        print(f"[✗] No chunks from '{source_label}' could be used for training.", file=sys.stderr)
+        sys.exit(1)
+
+    brain.save()
+    print(f"[✓] Training complete! Learned from {learned_chunks} chunk(s), skipped {skipped_chunks}. Model saved. Exiting.")
+
+
+def run_document_training(brain, file_path=None, url=None):
+    """
+    Train the model from a local document file or remote URL.
+    """
+    from atlas.document_loader import DocumentLoadError, load_from_local, load_from_url
+
+    try:
+        if file_path:
+            text = load_from_local(file_path)
+            source_label = file_path
+        else:
+            text = load_from_url(url)
+            source_label = url
+
+        train_brain_from_text(brain, text, source_label)
+        sys.exit(0)
+    except DocumentLoadError as exc:
+        print(f"[✗] Document training error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except requests.exceptions.RequestException as exc:
+        print(f"[✗] Network error during document download: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"[✗] An unexpected error occurred during document training: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """
     Main function to run the Atlas conversational AI.
     Initializes the AtlasBrain, handles user interaction,
     learning, response generation, and persistent saving.
-    Also handles the new web scraping and training feature.
+    Also handles web scraping and document training features.
     """
     parser = argparse.ArgumentParser(description="Run the Atlas conversational AI in different modes.")
     parser.add_argument('--training', action='store_true', help='Only learn from input, do not generate responses.')
     parser.add_argument('--production', action='store_true', help='Only generate responses, do not learn.')
     parser.add_argument('--dual', action='store_true', help='Both learn and generate responses (default).')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the configuration YAML file.')
+    parser.add_argument('--train', action='store_true', help='Train from a local document (use with --file).')
+    parser.add_argument('--file', type=str, help='Local document path (PDF, DOCX, TXT, MD) for training.')
+    parser.add_argument('--url', type=str, help='Remote document URL (PDF, DOCX, TXT, MD) for training.')
     parser.add_argument('--scraping', type=str, help='Scrape content from the given URL, sanitize it, and use it to train the AI.')
     args = parser.parse_args()
+
+    if args.train and not args.file:
+        print("Error: --train requires --file <path>.", file=sys.stderr)
+        sys.exit(1)
+
+    training_sources = [bool(args.file), bool(args.url), bool(args.scraping)]
+    if sum(training_sources) > 1:
+        print("Error: --file, --url, and --scraping are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
 
     # Load configuration
     config = load_config(args.config)
     brain = AtlasBrain(model_path="atlas_model.npz", vocab_path="atlas_vocab.pkl", config=config)
+
+    # --- Document Training Feature ---
+    if args.file or args.url:
+        run_document_training(brain, file_path=args.file, url=args.url)
+    # --- End Document Training Feature ---
 
     # --- Web Scraping and Training Feature ---
     if args.scraping:
@@ -96,28 +197,7 @@ def main():
                 print("[✗] No significant text content found on the page. Exiting.")
                 sys.exit(1)
 
-            print("[✓] Training Atlas with the new content... (This may take a moment)")
-            # Split text into chunks for learning
-            # A simple chunking by character count, trying to respect word boundaries
-            words = scraped_text.split()
-            current_chunk = []
-            current_chunk_len = 0
-            
-            for word in words:
-                # Add 1 for space
-                if current_chunk_len + len(word) + 1 > MAX_CHUNK_SIZE and current_chunk:
-                    brain.learn(" ".join(current_chunk))
-                    current_chunk = [word]
-                    current_chunk_len = len(word)
-                else:
-                    current_chunk.append(word)
-                    current_chunk_len += len(word) + 1
-            
-            if current_chunk: # Learn the last chunk
-                brain.learn(" ".join(current_chunk))
-
-            brain.save()
-            print("[✓] Training complete! Model saved. Exiting.")
+            train_brain_from_text(brain, scraped_text, args.scraping)
             sys.exit(0)
 
         except requests.exceptions.RequestException as e:

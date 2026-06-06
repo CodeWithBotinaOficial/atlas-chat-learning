@@ -35,6 +35,7 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 -   **Dropout Regularization**: Improves generalization and prevents overfitting.
 -   **Robustness**: Includes checks for NaN/Inf weights, numerically stable softmax, and empty responses.
 -   **Execution Modes**: Supports training-only, production-only, and dual (learn & respond) modes.
+-   **Document Training**: Learn from local or remote PDF, DOCX, TXT, and Markdown files via `--file` and `--url`.
 -   **Minimal Dependencies**: Built primarily with Python's standard library and NumPy.
 
 ## Getting Started
@@ -44,9 +45,11 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 -   Python 3.8+
 -   `numpy`
 -   `pyyaml`
--   `requests` (for web scraping)
+-   `requests` (for web scraping and document downloads)
 -   `beautifulsoup4` (for web scraping)
 -   `lxml` (recommended for `beautifulsoup4` parsing)
+-   `pypdf` (for PDF text extraction)
+-   `python-docx` (for DOCX text extraction)
 
 ### Installation
 
@@ -136,6 +139,55 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
     python main.py --production
     ```
 
+### Training from Documents
+
+Atlas can learn from document files in **PDF**, **DOCX**, **TXT**, and **Markdown (MD)** formats. The text is extracted, sanitized, split into chunks, and fed to the model. After training completes, the model is saved automatically and the program exits (no interactive chat).
+
+**Dependencies**: Install document parsing libraries with:
+
+```bash
+pip install pypdf python-docx
+```
+
+These are also included in `requirements.txt`.
+
+**Local files:**
+
+```bash
+python main.py --train --file /home/user/documents/report.pdf
+python main.py --file ./notes.docx
+python main.py --file data.txt
+python main.py --file readme.md
+```
+
+**Remote URLs:**
+
+```bash
+python main.py --url https://example.com/document.pdf
+python main.py --url https://example.com/file.docx
+```
+
+**Notes:**
+- `--file`, `--url`, and `--scraping` are mutually exclusive.
+- Only one document is processed per run.
+- Supported formats are detected from the file extension (local) or URL extension / HTTP `Content-Type` (remote).
+- Chunks are limited to about 1000 characters, respecting word boundaries.
+- If a required library is missing or a file is corrupted, Atlas prints a clear error and exits.
+
+**Example output:**
+
+```
+[✓] Loading local document: /home/user/documents/report.pdf
+[✓] Detected format: .pdf
+[✓] Extracting text...
+[✓] Extracted 45231 characters.
+[✓] Chunking text for training...
+[✓] Training Atlas with 48 chunk(s)... (This may take a moment)
+[✓] Trained chunk 1/48
+...
+[✓] Training complete! Learned from 48 chunk(s), skipped 0. Model saved. Exiting.
+```
+
 ### Web Scraping Training
 
 Atlas can also learn directly from web content. Use the `--scraping` argument followed by a URL to fetch, sanitize, and train the model with the text from a webpage.
@@ -215,13 +267,14 @@ This continuous learning process allows Atlas to adapt to your conversational st
 
 ## Project Structure
 
--   `main.py`: The main script to run the chatbot, now with argument parsing for execution modes and config path.
+-   `main.py`: The main script to run the chatbot, with argument parsing for execution modes, document training, and config path.
 -   `config.yaml`: Configuration file for hyperparameters.
 -   `atlas/`: Contains the core logic.
     -   `brain.py`: Manages the chatbot's overall logic, including tokenization, vocabulary management, conversation history, replay buffer, and orchestrating the Transformer.
     -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
     -   `grammar.py`: Contains the `GrammarHelper` class for post-processing generated responses to improve readability and structure.
     -   `config_loader.py`: Module to load and manage the `config.yaml` file.
+    -   `document_loader.py`: Loads and extracts text from PDF, DOCX, TXT, and MD files (local or remote).
 -   `web_scraper.py`: Contains functions for checking `robots.txt` and scraping web content.
 -   `text_processor.py`: Handles HTML parsing and text sanitization.
 -   `requirements.txt`: Lists Python dependencies.
