@@ -235,8 +235,34 @@ class AtlasBrain:
             self.replay_buffer.pop(0)  # Remove oldest
         self.replay_buffer.append((input_batch, target_batch))
 
+        # Store initial embedding for "hello" if it exists
+        hello_embedding_before = None
+        if "hello" in self.word_to_idx:
+            hello_id = self.word_to_idx["hello"]
+            hello_embedding_before = np.copy(self.transformer.token_embedding[hello_id])
+
         # Train on current user message
         loss = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
+
+        # Check embedding for "hello" after training
+        if "hello" in self.word_to_idx and hello_embedding_before is not None:
+            hello_id = self.word_to_idx["hello"]
+            hello_embedding_after = self.transformer.token_embedding[hello_id]
+            if not np.array_equal(hello_embedding_before, hello_embedding_after):
+                print(f"DEBUG: 'hello' embedding changed after training step {self.interaction_count}.")
+            else:
+                print(f"DEBUG: 'hello' embedding DID NOT change after training step {self.interaction_count}.")
+        elif "hello" not in self.word_to_idx and self.vocab_size > self.UNK_TOKEN_ID:
+            # If 'hello' is not in vocab, check UNK token embedding as a fallback
+            unk_embedding_before = np.copy(self.transformer.token_embedding[self.UNK_TOKEN_ID])
+            # Re-run train_step to ensure it's not just the first check
+            _ = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
+            unk_embedding_after = self.transformer.token_embedding[self.UNK_TOKEN_ID]
+            if not np.array_equal(unk_embedding_before, unk_embedding_after):
+                print(f"DEBUG: UNK token embedding changed after training step {self.interaction_count}.")
+            else:
+                print(f"DEBUG: UNK token embedding DID NOT change after training step {self.interaction_count}.")
+
 
         # Occasionally sample from replay buffer for additional training
         if self.replay_buffer and random.random() < self.replay_sample_rate:
@@ -258,7 +284,7 @@ class AtlasBrain:
         Generates a response based on an optional prompt, incorporating conversation history.
         """
         default_message_learning = "I'm learning to speak... please teach me more!"
-        # The default_message_not_sure will now be handled by GrammarHelper's fallbacks
+        specific_empty_response_warning = "I need more training before I can respond properly."
 
         if self.vocab_size <= len(self.SPECIAL_TOKENS):  # Only special tokens in vocab
             return default_message_learning
@@ -303,6 +329,11 @@ class AtlasBrain:
                 response_tokens.append(self.idx_to_word.get(token_id, "<UNK>"))
 
         raw_atlas_response = " ".join(response_tokens).strip()
+
+        # If raw_atlas_response is empty after token filtering, return a specific warning
+        if not raw_atlas_response:
+            print("DEBUG: raw_atlas_response was empty after token filtering. Returning specific warning.")
+            return specific_empty_response_warning
 
         # Apply grammatical post-processing
         # Pass the original prompt as previous_user_message to GrammarHelper

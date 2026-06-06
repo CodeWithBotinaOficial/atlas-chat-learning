@@ -113,7 +113,7 @@ def label_smoothing_backward(predictions, targets, vocab_size, smoothing=0.1, pa
     """
     Compute gradient of cross-entropy loss with label smoothing with respect to predictions.
     predictions: (batch_size * seq_len, vocab_size) - softmax probabilities
-    targets: (batch_size * seq_len,) - integer class labels
+    targets: (batch_size * seq_len) - integer class labels
     vocab_size: int - total number of possible classes
     smoothing: float - smoothing factor (e.g., 0.1)
     padding_mask: (batch_size * seq_len,) - boolean mask, True for valid tokens, False for padding.
@@ -219,7 +219,7 @@ class MultiHeadSelfAttention:
         """
         Forward pass for Multi-Head Self-Attention.
         x: (batch_size, seq_len, embed_dim)
-        mask: (1, 1, seq_len, seq_len) or None. Additive mask for attention scores.
+        mask: (1, 1, seq_len, seq_len) or None.
         training: boolean, if True, apply dropout.
         kv_cache_entry: optional dict with cached 'k' and 'v' arrays for inference.
         Returns: (batch_size, seq_len, embed_dim)
@@ -546,7 +546,7 @@ class TransformerBlock:
         d_x = d_x_from_attn_residual + d_x_from_norm1
         return d_x
 
-def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.0):
+def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.0, special_token_ids=None):
     """
     Applies top-k and top-p sampling to logits.
     logits: (vocab_size,) - raw logits for the next token.
@@ -555,8 +555,24 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
     top_p: float - if < 1.0, only consider tokens whose cumulative probability
                    exceeds top_p.
     temperature: float - controls randomness.
+    special_token_ids: list or set of int - IDs of special tokens to potentially exclude from random fallback.
     Returns: int - sampled token ID.
     """
+    if special_token_ids is None:
+        special_token_ids = {0, 1, 2, 3} # Default: PAD, UNK, BOS, EOS
+
+    # Check for degenerate logits (all -inf, NaN, or effectively zero)
+    if np.all(np.isinf(logits)) or np.all(np.isnan(logits)) or np.all(logits <= -1e9): # Check for very small values too
+        print("WARNING: All logits are degenerate (NaN, Inf, or very small). Falling back to random non-special token.")
+        
+        # Try to find a non-special token
+        non_special_indices = [i for i in range(vocab_size) if i not in special_token_ids]
+        if len(non_special_indices) > 0:
+            return np.random.choice(non_special_indices)
+        else:
+            # If only special tokens exist or vocab_size is very small, pick any token
+            return np.random.randint(0, vocab_size)
+
     # Handle very low temperature for deterministic greedy behavior
     if temperature <= 0.01: # A very small epsilon
         return np.argmax(logits)
@@ -578,23 +594,40 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
 
     # Check for NaN or Inf in probabilities
     if np.any(np.isnan(probabilities)) or np.any(np.isinf(probabilities)):
-        print("WARNING: NaN or Inf detected in probabilities during sampling.")
+        print("WARNING: NaN or Inf detected in probabilities during sampling after softmax.")
         # Fallback strategy: find valid indices in logits
         valid_indices = np.where(~np.isnan(logits) & ~np.isinf(logits))[0]
         if len(valid_indices) > 0:
-            # Choose randomly from the top 10 valid indices based on logits
-            top_valid_indices = valid_indices[np.argsort(logits[valid_indices])][::-1][:min(10, len(valid_indices))]
-            if len(top_valid_indices) > 0:
-                print(f"Falling back to random choice from top {len(top_valid_indices)} valid logits.")
-                return np.random.choice(top_valid_indices)
+            # Choose randomly from the top 10 valid indices based on logits, excluding special tokens if possible
+            top_valid_indices = valid_indices[np.argsort(logits[valid_indices])][::-1]
+            
+            # Filter out special tokens from top_valid_indices for a more meaningful fallback
+            filtered_top_valid_indices = [idx for idx in top_valid_indices if idx not in special_token_ids]
+            
+            if len(filtered_top_valid_indices) > 0:
+                final_choice_indices = filtered_top_valid_indices[:min(10, len(filtered_top_valid_indices))]
+                print(f"Falling back to random choice from top {len(final_choice_indices)} valid non-special logits.")
+                return np.random.choice(final_choice_indices)
+            elif len(top_valid_indices) > 0: # If only special tokens are valid, pick from them
+                final_choice_indices = top_valid_indices[:min(10, len(top_valid_indices))]
+                print(f"Falling back to random choice from top {len(final_choice_indices)} valid (possibly special) logits.")
+                return np.random.choice(final_choice_indices)
             else:
-                # If no valid indices in top 10, choose any valid index
-                print("Falling back to random choice from all valid logits.")
-                return np.random.choice(valid_indices)
+                # If no valid indices at all, choose a random non-special token from the entire vocab
+                print("Falling back to random non-special token from vocabulary.")
+                non_special_indices = [i for i in range(vocab_size) if i not in special_token_ids]
+                if len(non_special_indices) > 0:
+                    return np.random.choice(non_special_indices)
+                else:
+                    return np.random.randint(0, vocab_size) # If only special tokens exist
         else:
-            # If all logits are NaN/Inf, choose a random token from the entire vocab
-            print("WARNING: All logits are NaN/Inf. Falling back to random token from vocabulary.")
-            return np.random.randint(0, vocab_size)
+            # If all logits are NaN/Inf, choose a random non-special token from the entire vocab
+            print("WARNING: All logits are NaN/Inf. Falling back to random non-special token from vocabulary.")
+            non_special_indices = [i for i in range(vocab_size) if i not in special_token_ids]
+            if len(non_special_indices) > 0:
+                return np.random.choice(non_special_indices)
+            else:
+                return np.random.randint(0, vocab_size) # If only special tokens exist
 
 
     # Top-p filtering
@@ -629,15 +662,25 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
 
     # Fallback if all probabilities are zero after filtering
     if np.sum(probabilities) == 0:
+        print("WARNING: All probabilities became zero after filtering. Falling back to random non-special token.")
         # Revert to original (temperature-scaled) logits for fallback
         # Get top 10 indices from the (temperature-scaled) logits
-        top_10_indices = np.argsort(logits)[::-1][:min(10, vocab_size)]
+        top_10_indices = np.argsort(logits)[::-1]
         
-        if len(top_10_indices) > 0:
-            return np.random.choice(top_10_indices)
+        # Filter out special tokens from top_10_indices for a more meaningful fallback
+        filtered_top_10_indices = [idx for idx in top_10_indices if idx not in special_token_ids]
+
+        if len(filtered_top_10_indices) > 0:
+            return np.random.choice(filtered_top_10_indices[:min(10, len(filtered_top_10_indices))])
+        elif len(top_10_indices) > 0: # If only special tokens are valid, pick from them
+            return np.random.choice(top_10_indices[:min(10, len(top_10_indices))])
         else:
             # This case should ideally not happen if vocab_size > 0
-            return np.random.randint(0, vocab_size) # Random valid token
+            non_special_indices = [i for i in range(vocab_size) if i not in special_token_ids]
+            if len(non_special_indices) > 0:
+                return np.random.choice(non_special_indices)
+            else:
+                return np.random.randint(0, vocab_size) # If only special tokens exist
 
     return np.random.choice(vocab_size, p=probabilities)
 
@@ -665,6 +708,12 @@ class Transformer:
         self.top_p = config['generation']['top_p']
         self.beam_width = config['generation']['beam_width']
         self.max_new_tokens = config['generation']['max_new_tokens']
+
+        # Special token IDs (assuming common defaults if not in config)
+        # These are now defaults for the generate method, but still useful to store
+        # for internal logic or if generate is called without explicit overrides.
+        self._unk_token_id = config.get('unk_token_id', 1)
+        self._bos_token_id = config.get('bos_token_id', 2)
 
 
         self.token_embedding = xavier_init(self.vocab_size, self.embed_dim, dtype=self.dtype)
@@ -956,6 +1005,9 @@ class Transformer:
         # Beams are (log_probability, sequence_of_token_ids)
         beams = [(0.0, list(prompt_tokens[0]))]
         
+        # Define special_token_ids for this generation call
+        special_token_ids = {pad_token_id, self._unk_token_id, self._bos_token_id, eos_token_id}
+
         for _ in range(self.max_new_tokens):
             all_candidates = []
             for log_prob, current_sequence in beams:
@@ -983,17 +1035,25 @@ class Transformer:
                     print("WARNING: NaN or Inf detected in probabilities during beam search sampling.")
                     # Fallback strategy: if logits are also problematic, choose randomly from top 10 valid indices
                     valid_indices = np.where(~np.isnan(last_token_logits) & ~np.isinf(last_token_logits))[0]
-                    if len(valid_indices) > 0:
+                    
+                    # Filter out special tokens for a more meaningful fallback
+                    filtered_valid_indices = [idx for idx in valid_indices if idx not in special_token_ids]
+
+                    if len(filtered_valid_indices) > 0:
+                        top_valid_indices = filtered_valid_indices[np.argsort(last_token_logits[filtered_valid_indices])][::-1][:min(10, len(filtered_valid_indices))]
+                        print(f"Falling back to random choice from top {len(top_valid_indices)} valid non-special logits for beam search.")
+                        next_token_id = np.random.choice(top_valid_indices)
+                    elif len(valid_indices) > 0: # If only special tokens are valid
                         top_valid_indices = valid_indices[np.argsort(last_token_logits[valid_indices])][::-1][:min(10, len(valid_indices))]
-                        if len(top_valid_indices) > 0:
-                            print(f"Falling back to random choice from top {len(top_valid_indices)} valid logits for beam search.")
-                            next_token_id = np.random.choice(top_valid_indices)
-                        else:
-                            print("Falling back to random choice from all valid logits for beam search.")
-                            next_token_id = np.random.choice(valid_indices)
+                        print(f"Falling back to random choice from top {len(top_valid_indices)} valid (possibly special) logits for beam search.")
+                        next_token_id = np.random.choice(top_valid_indices)
                     else:
-                        print("WARNING: All logits are NaN/Inf. Falling back to random token from vocabulary for beam search.")
-                        next_token_id = np.random.randint(0, self.vocab_size)
+                        print("WARNING: All logits are NaN/Inf. Falling back to random non-special token from vocabulary for beam search.")
+                        non_special_indices = [i for i in range(self.vocab_size) if i not in special_token_ids]
+                        if len(non_special_indices) > 0:
+                            next_token_id = np.random.choice(non_special_indices)
+                        else:
+                            next_token_id = np.random.randint(0, self.vocab_size) # If only special tokens exist
                     
                     # Assign a very low probability to this fallback token to keep beam search stable
                     new_log_prob = log_prob + np.log(1e-6)
@@ -1030,15 +1090,23 @@ class Transformer:
         eos_token_id: int - ID of the end-of-sequence token.
         Returns: np.ndarray - array of generated token IDs.
         """
+        print(f"Generate: Prompt tokens: {prompt_tokens}, Max new tokens: {self.max_new_tokens}")
+
+        # Define special_token_ids for this generation call
+        special_token_ids = {pad_token_id, self._unk_token_id, self._bos_token_id, eos_token_id}
+
         if self.beam_width > 0:
             return self._beam_search_generate(prompt_tokens, pad_token_id, eos_token_id)
 
         generated_tokens = list(prompt_tokens[0])
+        initial_prompt_len = len(generated_tokens)
         batch_size = 1  # Generation is always batch size 1
         kv_cache = {}
+        last_token_logits = None # To store logits for fallback if no tokens are generated
 
         for step in range(self.max_new_tokens):
             if len(generated_tokens) == 0:
+                print("WARNING: generated_tokens became empty during generation loop. Breaking.")
                 break
 
             if len(generated_tokens) > self.max_seq_len:
@@ -1066,12 +1134,51 @@ class Transformer:
                         last_token_logits[token_id] /= self.repetition_penalty
 
             # Sample next token using top-k and top-p
-            next_token = _top_k_top_p_sampling(last_token_logits, self.vocab_size, self.top_k, self.top_p, self.temperature)
+            next_token = _top_k_top_p_sampling(
+                last_token_logits,
+                self.vocab_size,
+                self.top_k,
+                self.top_p,
+                self.temperature,
+                special_token_ids=special_token_ids
+            )
             
+            print(f"  Generated token ID at step {step}: {next_token}")
             generated_tokens.append(next_token)
 
             # Stop if EOS token is generated
             if next_token == eos_token_id:
+                print(f"  EOS token ({eos_token_id}) generated. Stopping generation.")
                 break
 
+        # Ensure at least one new token is generated if the loop didn't add any
+        if len(generated_tokens) == initial_prompt_len:
+            print("WARNING: No new tokens were generated. Forcing generation of one token.")
+            if last_token_logits is not None:
+                # Try to pick the most probable non-special token
+                # Exclude special tokens from consideration for forced generation
+                non_special_token_logits = np.copy(last_token_logits)
+                for st_id in special_token_ids:
+                    if st_id < self.vocab_size:
+                        non_special_token_logits[st_id] = -np.inf # Effectively remove special tokens
+
+                if np.all(non_special_token_logits == -np.inf): # If all non-special tokens are masked
+                    print("  All non-special tokens masked. Picking a random non-special token.")
+                    non_special_indices = [i for i in range(self.vocab_size) if i not in special_token_ids]
+                    if len(non_special_indices) > 0:
+                        forced_token = np.random.choice(non_special_indices)
+                    else:
+                        # If only special tokens exist in vocab, pick UNK or a random token
+                        forced_token = self._unk_token_id if self._unk_token_id < self.vocab_size else np.random.randint(0, self.vocab_size)
+                else:
+                    forced_token = np.argmax(non_special_token_logits)
+                
+                print(f"  Forced generation of token ID: {forced_token}")
+                generated_tokens.append(forced_token)
+            else:
+                # If last_token_logits is None (e.g., prompt was empty or some error before first step)
+                print("  last_token_logits was None. Appending UNK token.")
+                generated_tokens.append(self._unk_token_id) # Fallback to UNK token
+
+        print(f"Generate: Final generated tokens: {generated_tokens}")
         return np.array(generated_tokens)
