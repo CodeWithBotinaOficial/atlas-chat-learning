@@ -44,12 +44,12 @@ def relu_backward(dA, Z):
     dZ[Z <= 0] = 0
     return dZ
 
-def xavier_init(input_dim, output_dim):
+def xavier_init(input_dim, output_dim, dtype=np.float32):
     """
     Xavier/Glorot uniform initialization for weights.
     """
     limit = np.sqrt(6 / (input_dim + output_dim))
-    return np.random.uniform(-limit, limit, size=(input_dim, output_dim))
+    return np.random.uniform(-limit, limit, size=(input_dim, output_dim)).astype(dtype)
 
 def clip_gradients(grads, max_norm=5.0):
     """
@@ -140,15 +140,15 @@ class PositionalEncoding:
     Applies sinusoidal positional encoding to input embeddings.
     """
 
-    def __init__(self, embed_dim, max_seq_len):
+    def __init__(self, embed_dim, max_seq_len, dtype=np.float32):
         self.embed_dim = embed_dim
         self.max_seq_len = max_seq_len
-        self.pe = self._create_positional_encoding()
+        self.pe = self._create_positional_encoding(dtype)
 
-    def _create_positional_encoding(self):
-        pe = np.zeros((self.max_seq_len, self.embed_dim))
+    def _create_positional_encoding(self, dtype):
+        pe = np.zeros((self.max_seq_len, self.embed_dim), dtype=dtype)
         position = np.arange(0, self.max_seq_len)[:, np.newaxis]
-        div_term = np.exp(np.arange(0, self.embed_dim, 2) * -(math.log(10000.0) / self.embed_dim))
+        div_term = np.exp(np.arange(0, self.embed_dim, 2) * -(math.log(10000.0) / self.embed_dim)).astype(dtype)
         pe[:, 0::2] = np.sin(position * div_term)
         pe[:, 1::2] = np.cos(position * div_term)
         return pe[np.newaxis, :, :]  # Add batch dimension (1, max_seq_len, embed_dim)
@@ -170,24 +170,25 @@ class MultiHeadSelfAttention:
     Multi-Head Self-Attention mechanism.
     """
 
-    def __init__(self, embed_dim, num_heads, dropout_rate=0.0):
+    def __init__(self, embed_dim, num_heads, dropout_rate=0.0, dtype=np.float32):
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.head_dim = embed_dim // num_heads
         self.num_heads = num_heads
         self.embed_dim = embed_dim
         self.dropout_rate = dropout_rate
+        self.dtype = dtype
 
         # Weights for Q, K, V for all heads (Xavier initialization)
-        self.W_q = xavier_init(embed_dim, embed_dim)
-        self.b_q = np.zeros(embed_dim)
-        self.W_k = xavier_init(embed_dim, embed_dim)
-        self.b_k = np.zeros(embed_dim)
-        self.W_v = xavier_init(embed_dim, embed_dim)
-        self.b_v = np.zeros(embed_dim)
+        self.W_q = xavier_init(embed_dim, embed_dim, dtype=dtype)
+        self.b_q = np.zeros(embed_dim, dtype=dtype)
+        self.W_k = xavier_init(embed_dim, embed_dim, dtype=dtype)
+        self.b_k = np.zeros(embed_dim, dtype=dtype)
+        self.W_v = xavier_init(embed_dim, embed_dim, dtype=dtype)
+        self.b_v = np.zeros(embed_dim, dtype=dtype)
 
         # Output projection (Xavier initialization)
-        self.W_o = xavier_init(embed_dim, embed_dim)
-        self.b_o = np.zeros(embed_dim)
+        self.W_o = xavier_init(embed_dim, embed_dim, dtype=dtype)
+        self.b_o = np.zeros(embed_dim, dtype=dtype)
 
         self.params = {
             'W_q': self.W_q, 'b_q': self.b_q,
@@ -225,10 +226,23 @@ class MultiHeadSelfAttention:
         """
         batch_size, seq_len, _ = x.shape
 
+        # Cast to float32 for computation if using half-precision
+        if self.dtype == np.float16:
+            x = x.astype(np.float32)
+            W_q, b_q = self.W_q.astype(np.float32), self.b_q.astype(np.float32)
+            W_k, b_k = self.W_k.astype(np.float32), self.b_k.astype(np.float32)
+            W_v, b_v = self.W_v.astype(np.float32), self.b_v.astype(np.float32)
+            W_o, b_o = self.W_o.astype(np.float32), self.b_o.astype(np.float32)
+        else:
+            W_q, b_q = self.W_q, self.b_q
+            W_k, b_k = self.W_k, self.b_k
+            W_v, b_v = self.W_v, self.b_v
+            W_o, b_o = self.W_o, self.b_o
+
         # Linear projections
-        Q = x @ self.W_q + self.b_q
-        K = x @ self.W_k + self.b_k
-        V = x @ self.W_v + self.b_v
+        Q = x @ W_q + b_q
+        K = x @ W_k + b_k
+        V = x @ W_v + b_v
 
         # Split into multiple heads
         Q_heads = self._split_heads(Q, batch_size, seq_len)
@@ -263,7 +277,7 @@ class MultiHeadSelfAttention:
         attention_output = self._combine_heads(attention_output_heads, batch_size, seq_len)
 
         # Output projection
-        output = attention_output @ self.W_o + self.b_o
+        output = attention_output @ W_o + b_o
         output = dropout(output, self.dropout_rate, training) # Dropout after output projection
 
         # Save for backward pass
@@ -337,11 +351,12 @@ class FeedForward:
     Position-wise Feed-Forward Network.
     """
 
-    def __init__(self, embed_dim, ff_dim, dropout_rate=0.0):
-        self.W1 = xavier_init(embed_dim, ff_dim)
-        self.b1 = np.zeros(ff_dim)
-        self.W2 = xavier_init(ff_dim, embed_dim)
-        self.b2 = np.zeros(embed_dim)
+    def __init__(self, embed_dim, ff_dim, dropout_rate=0.0, dtype=np.float32):
+        self.dtype = dtype
+        self.W1 = xavier_init(embed_dim, ff_dim, dtype=dtype)
+        self.b1 = np.zeros(ff_dim, dtype=dtype)
+        self.W2 = xavier_init(ff_dim, embed_dim, dtype=dtype)
+        self.b2 = np.zeros(embed_dim, dtype=dtype)
         self.dropout_rate = dropout_rate
 
         self.params = {
@@ -358,10 +373,20 @@ class FeedForward:
         Returns: (batch_size, seq_len, embed_dim)
         """
         self.x = x  # Save for backward
-        self.Z1 = x @ self.W1 + self.b1
+
+        # Cast to float32 for computation if using half-precision
+        if self.dtype == np.float16:
+            x = x.astype(np.float32)
+            W1, b1 = self.W1.astype(np.float32), self.b1.astype(np.float32)
+            W2, b2 = self.W2.astype(np.float32), self.b2.astype(np.float32)
+        else:
+            W1, b1 = self.W1, self.b1
+            W2, b2 = self.W2, self.b2
+
+        self.Z1 = x @ W1 + b1
         self.A1 = relu(self.Z1)
         self.A1_dropped = dropout(self.A1, self.dropout_rate, training) # Dropout after ReLU
-        output = self.A1_dropped @ self.W2 + self.b2
+        output = self.A1_dropped @ W2 + b2
         self.cache_training = training # Save training state for backward
         return output
 
@@ -399,15 +424,16 @@ class TransformerBlock:
     Includes Layer Normalization and Residual Connections.
     """
 
-    def __init__(self, embed_dim, num_heads, ff_dim, dropout_rate=0.0):
-        self.attention = MultiHeadSelfAttention(embed_dim, num_heads, dropout_rate)
-        self.feed_forward = FeedForward(embed_dim, ff_dim, dropout_rate)
+    def __init__(self, embed_dim, num_heads, ff_dim, dropout_rate=0.0, dtype=np.float32):
+        self.dtype = dtype
+        self.attention = MultiHeadSelfAttention(embed_dim, num_heads, dropout_rate, dtype=dtype)
+        self.feed_forward = FeedForward(embed_dim, ff_dim, dropout_rate, dtype=dtype)
 
         # Layer normalization parameters
-        self.norm1_gamma = np.ones(embed_dim)
-        self.norm1_beta = np.zeros(embed_dim)
-        self.norm2_gamma = np.ones(embed_dim)
-        self.norm2_beta = np.zeros(embed_dim)
+        self.norm1_gamma = np.ones(embed_dim, dtype=dtype)
+        self.norm1_beta = np.zeros(embed_dim, dtype=dtype)
+        self.norm2_gamma = np.ones(embed_dim, dtype=dtype)
+        self.norm2_beta = np.zeros(embed_dim, dtype=dtype)
 
         self.params = {
             'norm1_gamma': self.norm1_gamma, 'norm1_beta': self.norm1_beta,
@@ -425,9 +451,18 @@ class TransformerBlock:
         layer_idx: int - index of this block in the transformer stack.
         Returns: (batch_size, seq_len, embed_dim)
         """
+        # Cast to float32 for computation if using half-precision
+        if self.dtype == np.float16:
+            x = x.astype(np.float32)
+            norm1_gamma, norm1_beta = self.norm1_gamma.astype(np.float32), self.norm1_beta.astype(np.float32)
+            norm2_gamma, norm2_beta = self.norm2_gamma.astype(np.float32), self.norm2_beta.astype(np.float32)
+        else:
+            norm1_gamma, norm1_beta = self.norm1_gamma, self.norm1_beta
+            norm2_gamma, norm2_beta = self.norm2_gamma, self.norm2_beta
+
         # Layer norm 1
-        norm1_out, self.norm1_mean, self.norm1_variance, self.norm1_x_normalized = layer_norm(x, self.norm1_gamma,
-                                                                                              self.norm1_beta)
+        norm1_out, self.norm1_mean, self.norm1_variance, self.norm1_x_normalized = layer_norm(x, norm1_gamma,
+                                                                                              norm1_beta)
 
         kv_cache_entry = None
         if cache is not None and not training:
@@ -443,8 +478,8 @@ class TransformerBlock:
 
         # Layer norm 2
         norm2_out, self.norm2_mean, self.norm2_variance, self.norm2_x_normalized = layer_norm(attn_output_residual,
-                                                                                              self.norm2_gamma,
-                                                                                              self.norm2_beta)
+                                                                                              norm2_gamma,
+                                                                                              norm2_beta)
 
         # Feed forward
         ff_output = self.feed_forward.forward(norm2_out, training)
@@ -620,6 +655,8 @@ class Transformer:
         self.num_layers = config['model']['num_layers']
         self.max_seq_len = config['model']['max_seq_len']
         self.dropout_rate = config['model']['dropout_rate']
+        self.half_precision = config['performance']['half_precision']
+        self.dtype = np.float16 if self.half_precision else np.float32
 
         # Generation parameters
         self.temperature = config['generation']['temperature']
@@ -630,13 +667,13 @@ class Transformer:
         self.max_new_tokens = config['generation']['max_new_tokens']
 
 
-        self.token_embedding = xavier_init(self.vocab_size, self.embed_dim)
-        self.positional_encoding = PositionalEncoding(self.embed_dim, self.max_seq_len)
+        self.token_embedding = xavier_init(self.vocab_size, self.embed_dim, dtype=self.dtype)
+        self.positional_encoding = PositionalEncoding(self.embed_dim, self.max_seq_len, dtype=self.dtype)
         self.transformer_blocks = [
-            TransformerBlock(self.embed_dim, self.num_heads, self.ff_dim, self.dropout_rate) for _ in range(self.num_layers)
+            TransformerBlock(self.embed_dim, self.num_heads, self.ff_dim, self.dropout_rate, dtype=self.dtype) for _ in range(self.num_layers)
         ]
-        self.output_layer = np.random.randn(self.embed_dim, self.vocab_size) * 0.01
-        self.output_bias = np.zeros(self.vocab_size)
+        self.output_layer = (np.random.randn(self.embed_dim, self.vocab_size) * 0.01).astype(self.dtype)
+        self.output_bias = np.zeros(self.vocab_size, dtype=self.dtype)
 
         # Adam optimizer state and warmup
         self.warmup_steps = 1000
@@ -704,19 +741,19 @@ class Transformer:
             # print(f"Updating vocab size from {self.vocab_size} to {new_vocab_size}")
 
             # Expand token embedding matrix
-            new_embeddings = xavier_init(new_vocab_size - self.vocab_size, self.embed_dim)
+            new_embeddings = xavier_init(new_vocab_size - self.vocab_size, self.embed_dim, dtype=self.dtype)
             self.token_embedding = np.vstack((self.token_embedding, new_embeddings))
             self.params['token_embedding'] = self.token_embedding  # Update reference
             self.grads['token_embedding'] = np.zeros_like(self.token_embedding)  # Reset grads for new shape
 
             # Expand output layer weights
-            new_output_weights = xavier_init(self.embed_dim, new_vocab_size - self.vocab_size)
+            new_output_weights = xavier_init(self.embed_dim, new_vocab_size - self.vocab_size, dtype=self.dtype)
             self.output_layer = np.hstack((self.output_layer, new_output_weights))
             self.params['output_layer'] = self.output_layer  # Update reference
             self.grads['output_layer'] = np.zeros_like(self.output_layer)  # Reset grads for new shape
 
             # Expand output bias
-            new_output_bias = np.zeros(new_vocab_size - self.vocab_size)
+            new_output_bias = np.zeros(new_vocab_size - self.vocab_size, dtype=self.dtype)
             self.output_bias = np.hstack((self.output_bias, new_output_bias))
             self.params['output_bias'] = self.output_bias  # Update reference
             self.grads['output_bias'] = np.zeros_like(self.output_bias)  # Reset grads for new shape
@@ -736,7 +773,7 @@ class Transformer:
         Creates a look-ahead mask to prevent attention to future tokens.
         Returns: (1, 1, seq_len, seq_len)
         """
-        mask = np.triu(np.ones((seq_len, seq_len)), k=1).astype('float32')
+        mask = np.triu(np.ones((seq_len, seq_len)), k=1).astype(np.float32)
         mask = (mask * -1e9)  # Convert to additive mask (large negative value)
         return mask[np.newaxis, np.newaxis, :, :]  # (1, 1, seq_len, seq_len)
 
@@ -758,7 +795,7 @@ class Transformer:
         self.cache_x_token_ids = x
 
         # Token and positional embeddings (scale embeddings per original Transformer paper)
-        embeddings = self.token_embedding[x]  # (batch_size, seq_len, embed_dim)
+        embeddings = self.token_embedding[x].astype(np.float32)  # Cast to float32 for computation
         embeddings = embeddings * math.sqrt(self.embed_dim)
         start_pos = past_seq_len if incremental else 0
         x = self.positional_encoding.forward(embeddings, start_pos=start_pos)
@@ -784,7 +821,7 @@ class Transformer:
         self.cache_x_after_blocks = x
 
         # Final linear layer
-        output_logits = x @ self.output_layer + self.output_bias  # (batch_size, seq_len, vocab_size)
+        output_logits = x @ self.output_layer.astype(np.float32) + self.output_bias.astype(np.float32)  # (batch_size, seq_len, vocab_size)
         return output_logits
 
     def backward(self, d_output_logits):
@@ -797,7 +834,7 @@ class Transformer:
         # Gradients for output layer
         self.grads['output_layer'] = np.einsum('bsd,bsv->dv', self.cache_x_after_blocks, d_output_logits)
         self.grads['output_bias'] = np.sum(d_output_logits, axis=(0, 1))
-        d_x_from_output = d_output_logits @ self.output_layer.T
+        d_x_from_output = d_output_logits @ self.output_layer.astype(np.float32).T
 
         # Backward through transformer blocks
         d_x = d_x_from_output
@@ -806,7 +843,7 @@ class Transformer:
 
         # Gradients for token embeddings (account for embedding scaling in forward pass)
         embed_scale = math.sqrt(self.embed_dim)
-        d_token_embedding = np.zeros_like(self.token_embedding)
+        d_token_embedding = np.zeros_like(self.token_embedding, dtype=np.float32)
         for i in range(batch_size):
             for j in range(seq_len):
                 d_token_embedding[self.cache_x_token_ids[i, j]] += d_x[i, j] * embed_scale
@@ -871,32 +908,46 @@ class Transformer:
 
         t = self.train_step_count
 
-        def _adam_update(param, grad, m_key):
-            self.m[m_key] = beta1 * self.m[m_key] + (1 - beta1) * grad
-            self.v[m_key] = beta2 * self.v[m_key] + (1 - beta2) * (grad ** 2)
+        def _adam_update(param_name, grad, m_key):
+            # Retrieve the parameter by name
+            param = self.params[param_name]
+
+            # Cast parameter and gradient to float32 for Adam computation
+            param_f32 = param.astype(np.float32)
+            grad_f32 = grad.astype(np.float32)
+
+            self.m[m_key] = beta1 * self.m[m_key] + (1 - beta1) * grad_f32
+            self.v[m_key] = beta2 * self.v[m_key] + (1 - beta2) * (grad_f32 ** 2)
             m_hat = self.m[m_key] / (1 - beta1 ** t)
             v_hat = self.v[m_key] / (1 - beta2 ** t)
-            param -= learning_rate * m_hat / (np.sqrt(v_hat) + epsilon)
+            
+            # Update in float32, then cast back to original dtype
+            updated_param_f32 = param_f32 - learning_rate * m_hat / (np.sqrt(v_hat) + epsilon)
+            self.params[param_name][:] = updated_param_f32.astype(self.dtype)
+
 
         for k in ['token_embedding', 'output_layer', 'output_bias']:
             if k in self.params and k in all_grads:
-                _adam_update(self.params[k], all_grads[k], k)
+                _adam_update(k, all_grads[k], k)
 
         for i, block in enumerate(self.transformer_blocks):
             for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
+                param_name = f'block_{i}_{k}'
                 grad_key = f'block_{i}_{k}'
-                if k in block.params and grad_key in all_grads:
-                    _adam_update(block.params[k], all_grads[grad_key], grad_key)
+                if param_name in self.params and grad_key in all_grads:
+                    _adam_update(param_name, all_grads[grad_key], grad_key)
 
-            for k in block.attention.params.keys():
-                grad_key = f'block_{i}_attn_{k}'
-                if grad_key in all_grads:
-                    _adam_update(block.attention.params[k], all_grads[grad_key], grad_key)
+            for k_attn in block.attention.params.keys():
+                param_name = f'block_{i}_attn_{k_attn}'
+                grad_key = f'block_{i}_attn_{k_attn}'
+                if param_name in self.params and grad_key in all_grads:
+                    _adam_update(param_name, all_grads[grad_key], grad_key)
 
-            for k in block.feed_forward.params.keys():
-                grad_key = f'block_{i}_ff_{k}'
-                if grad_key in all_grads:
-                    _adam_update(block.feed_forward.params[k], all_grads[grad_key], grad_key)
+            for k_ff in block.feed_forward.params.keys():
+                param_name = f'block_{i}_ff_{k_ff}'
+                grad_key = f'block_{i}_ff_{k_ff}'
+                if param_name in self.params and grad_key in all_grads:
+                    _adam_update(param_name, all_grads[grad_key], grad_key)
 
     def _beam_search_generate(self, prompt_tokens, pad_token_id, eos_token_id):
         """

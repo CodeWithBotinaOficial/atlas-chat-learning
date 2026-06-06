@@ -109,6 +109,11 @@ Here's a breakdown of the configuration parameters:
     -   `max_retries`: The number of times the scraper will retry fetching a URL if a transient network error (like a timeout or connection error) occurs.
     -   `backoff_factor`: A multiplier for the exponential backoff delay between retry attempts. The wait time is calculated as `backoff_factor * (2 ** (attempt - 1))` seconds.
 
+-   **`performance`**: Parameters for optimizing Atlas for different hardware.
+    -   `low_memory`: If `true`, Atlas will automatically configure itself with a very small model and conservative generation settings to minimize RAM usage. This is ideal for devices with limited memory (e.g., 4GB or less).
+    -   `half_precision`: If `true`, model weights will be stored in `float16` (half-precision) format, reducing memory footprint by approximately 50%. Computations are still performed in `float32` for numerical stability during training. This is an experimental feature and may introduce slight numerical differences.
+    -   `max_ram_gb`: (Future) Optional: auto-adjust model if RAM is limited.
+
 **Important**: After modifying `config.yaml`, you need to restart Atlas for the changes to take effect.
 
 ### Execution Modes
@@ -191,7 +196,6 @@ python main.py --url https://example.com/file.docx
 [✓] Extracted 45231 characters.
 [✓] Chunking text for training...
 [✓] Training Atlas with 48 chunk(s)... (This may take a moment)
-[✓] Trained chunk 1/48
 ...
 [✓] Training complete! Learned from 48 chunk(s), skipped 0. Model saved. Exiting.
 ```
@@ -300,7 +304,25 @@ This continuous learning process allows Atlas to adapt to your conversational st
 
 The computational resources required depend heavily on the `model` configuration parameters, especially `embed_dim`, `num_heads`, `ff_dim`, `num_layers`, and `max_seq_len`.
 
--   **Small Configuration (e.g., default `config.yaml`)**:
+-   **Low-Memory Mode (`performance.low_memory: true`)**:
+    -   **RAM**: Minimum 1GB, 2GB recommended.
+    -   **CPU**: Any modern CPU, including single-board computers like Raspberry Pi.
+    -   **Disk Space**: Negligible (model files are typically < 1MB).
+    -   **Changes**: This mode drastically reduces model size and disables heavy generation features. Specifically, it sets:
+        -   `model.embed_dim = 16`
+        -   `model.num_heads = 2`
+        -   `model.ff_dim = 32`
+        -   `model.num_layers = 1`
+        -   `model.max_seq_len = 25`
+        -   `model.dropout_rate = 0.0`
+        -   `generation.beam_width = 0`
+        -   `generation.top_k = 10`
+        -   `generation.max_new_tokens = 30`
+        -   `training.replay_buffer_size = 5`
+        -   `training.replay_sample_rate = 0.0`
+        -   `memory.max_history_length = 2`
+
+-   **Standard Configuration (e.g., default `config.yaml`)**:
     -   **RAM**: Minimum 4GB, 8GB recommended.
     -   **CPU**: Any modern multi-core CPU (e.g., Intel i3/i5 or AMD Ryzen 3/5 equivalent) from the last 5-7 years should suffice for interactive use. Training will be slower but manageable.
     -   **Disk Space**: Negligible (model files are small, typically < 10MB).
@@ -309,6 +331,9 @@ The computational resources required depend heavily on the `model` configuration
     -   **RAM**: Minimum 16GB, 32GB+ recommended. The memory footprint grows significantly with `embed_dim` and `max_seq_len`.
     -   **CPU**: A powerful multi-core CPU (e.g., Intel i7/i9 or AMD Ryzen 7/9 equivalent) is highly recommended for reasonable training and response generation times.
     -   **Disk Space**: Model files can grow to tens or hundreds of MBs.
+
+**Half-Precision (`performance.half_precision: true`)**:
+This option stores model weights in `float16` format, effectively halving the memory usage of the model parameters. While computations are performed in `float32` for numerical stability during training, the reduced storage can be beneficial for memory-constrained environments. This feature is experimental and may subtly affect model stability or convergence.
 
 **General Recommendation**: For a smooth interactive experience and faster training, a system with at least 8GB RAM and a quad-core CPU is advisable. If you plan to experiment with significantly larger models or extensive web scraping, consider a machine with 16GB+ RAM.
 

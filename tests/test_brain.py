@@ -35,6 +35,11 @@ DEFAULT_TEST_CONFIG = {
     },
     'memory': {
         'max_history_length': 5
+    },
+    'performance': {
+        'low_memory': False,
+        'half_precision': False,
+        'max_ram_gb': None,
     }
 }
 

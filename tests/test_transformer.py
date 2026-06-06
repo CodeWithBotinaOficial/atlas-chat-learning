@@ -7,7 +7,7 @@ from atlas.brain import AtlasBrain  # Import AtlasBrain to get special token IDs
 
 
 # --- Helper functions for testing ---
-def _create_dummy_transformer_config(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0):
+def _create_dummy_transformer_config(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0, half_precision=False):
     return {
         'vocab_size': vocab_size,
         'model': {
@@ -25,11 +25,14 @@ def _create_dummy_transformer_config(vocab_size=10, embed_dim=16, num_heads=2, f
             'top_p': 0.9,
             'beam_width': 0,
             'max_new_tokens': 20,
+        },
+        'performance': {
+            'half_precision': half_precision
         }
     }
 
-def _create_dummy_transformer(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0):
-    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate)
+def _create_dummy_transformer(vocab_size=10, embed_dim=16, num_heads=2, ff_dim=32, num_layers=2, max_seq_len=50, dropout_rate=0.0, half_precision=False):
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, dropout_rate, half_precision)
     return Transformer(config)
 
 
@@ -491,3 +494,71 @@ def test_transformer_nan_stability_during_training():
         loss = transformer.train_step(input_padded, target_padded, learning_rate, training=True, pad_token_id=AtlasBrain.PAD_TOKEN_ID)
         assert loss is not None, f"NaN or Inf loss detected at training step {i}"
         assert not np.isnan(loss) and not np.isinf(loss), f"NaN or Inf loss value at training step {i}: {loss}"
+
+def test_half_precision_dtypes():
+    vocab_size = 10
+    embed_dim = 16
+    num_heads = 2
+    ff_dim = 32
+    num_layers = 1
+    max_seq_len = 50
+
+    config = _create_dummy_transformer_config(vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len, half_precision=True)
+    transformer = Transformer(config)
+
+    assert transformer.dtype == np.float16
+    assert transformer.token_embedding.dtype == np.float16
+    assert transformer.output_layer.dtype == np.float16
+    assert transformer.output_bias.dtype == np.float16
+    assert transformer.positional_encoding.pe.dtype == np.float16
+
+    for block in transformer.transformer_blocks:
+        assert block.dtype == np.float16
+        assert block.norm1_gamma.dtype == np.float16
+        assert block.norm1_beta.dtype == np.float16
+        assert block.norm2_gamma.dtype == np.float16
+        assert block.norm2_beta.dtype == np.float16
+
+        assert block.attention.dtype == np.float16
+        assert block.attention.W_q.dtype == np.float16
+        assert block.attention.b_q.dtype == np.float16
+        assert block.attention.W_k.dtype == np.float16
+        assert block.attention.b_k.dtype == np.float16
+        assert block.attention.W_v.dtype == np.float16
+        assert block.attention.b_v.dtype == np.float16
+        assert block.attention.W_o.dtype == np.float16
+        assert block.attention.b_o.dtype == np.float16
+
+        assert block.feed_forward.dtype == np.float16
+        assert block.feed_forward.W1.dtype == np.float16
+        assert block.feed_forward.b1.dtype == np.float16
+        assert block.feed_forward.W2.dtype == np.float16
+        assert block.feed_forward.b2.dtype == np.float16
+
+    # Test that forward pass still works with half-precision
+    batch_size = 2
+    seq_len = 10
+    dummy_input_ids = np.random.randint(0, transformer.vocab_size, (batch_size, seq_len))
+    output_logits = transformer.forward(dummy_input_ids)
+    assert output_logits.dtype == np.float32 # Output logits should be float32 for stability
+
+    # Test that training step still works with half-precision
+    input_sequence = np.array([[1, 2, 3, 1]])
+    target_sequence = np.array([[2, 3, 1, 2]])
+    input_padded = np.full((1, max_seq_len), AtlasBrain.PAD_TOKEN_ID, dtype=int)
+    target_padded = np.full((1, max_seq_len), AtlasBrain.PAD_TOKEN_ID, dtype=int)
+    input_padded[0, :input_sequence.shape[1]] = input_sequence[0]
+    target_padded[0, :target_sequence.shape[1]] = target_sequence[0]
+
+    loss = transformer.train_step(input_padded, target_padded, 0.001, training=True, pad_token_id=AtlasBrain.PAD_TOKEN_ID)
+    assert loss is not None
+    assert not np.isnan(loss) and not np.isinf(loss)
+
+    # Verify that parameters remain float16 after update
+    assert transformer.token_embedding.dtype == np.float16
+    assert transformer.output_layer.dtype == np.float16
+    assert transformer.output_bias.dtype == np.float16
+    for block in transformer.transformer_blocks:
+        assert block.norm1_gamma.dtype == np.float16
+        assert block.attention.W_q.dtype == np.float16
+        assert block.feed_forward.W1.dtype == np.float16

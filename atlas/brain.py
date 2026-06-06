@@ -30,6 +30,22 @@ class AtlasBrain:
         else:
             self.config = config
 
+        # Apply low_memory preset if enabled
+        if self.config.get('performance', {}).get('low_memory', False):
+            print("Low-memory mode enabled. Applying memory-optimized configuration.")
+            self.config['model']['embed_dim'] = 16
+            self.config['model']['num_heads'] = 2
+            self.config['model']['ff_dim'] = 32
+            self.config['model']['num_layers'] = 1
+            self.config['model']['max_seq_len'] = 25
+            self.config['model']['dropout_rate'] = 0.0
+            self.config['generation']['beam_width'] = 0
+            self.config['generation']['top_k'] = 10
+            self.config['generation']['max_new_tokens'] = 30
+            self.config['training']['replay_buffer_size'] = 5
+            self.config['training']['replay_sample_rate'] = 0.0
+            self.config['memory']['max_history_length'] = 2
+
         self.word_to_idx = {}
         self.idx_to_word = {}
         self.vocab_size = 0
@@ -80,7 +96,8 @@ class AtlasBrain:
         transformer_config = {
             'vocab_size': self.vocab_size,
             'model': self.config['model'],
-            'generation': self.config['generation']
+            'generation': self.config['generation'],
+            'performance': self.config.get('performance', {}) # Pass performance config safely
         }
         self.transformer = Transformer(transformer_config)
 
@@ -178,7 +195,8 @@ class AtlasBrain:
             transformer_config = {
                 'vocab_size': self.vocab_size,
                 'model': self.config['model'],
-                'generation': self.config['generation']
+                'generation': self.config['generation'],
+                'performance': self.config.get('performance', {})
             }
             self.transformer = Transformer(transformer_config)
             # Ensure vocab size is updated for the new transformer
@@ -357,6 +375,22 @@ class AtlasBrain:
                         return base
                     self.config = merge_configs(self.config, loaded_config)
 
+                # Apply low_memory preset if enabled AFTER loading and merging config
+                if self.config.get('performance', {}).get('low_memory', False):
+                    print("Low-memory mode enabled during load. Applying memory-optimized configuration.")
+                    self.config['model']['embed_dim'] = 16
+                    self.config['model']['num_heads'] = 2
+                    self.config['model']['ff_dim'] = 32
+                    self.config['model']['num_layers'] = 1
+                    self.config['model']['max_seq_len'] = 25
+                    self.config['model']['dropout_rate'] = 0.0
+                    self.config['generation']['beam_width'] = 0
+                    self.config['generation']['top_k'] = 10
+                    self.config['generation']['max_new_tokens'] = 30
+                    self.config['training']['replay_buffer_size'] = 5
+                    self.config['training']['replay_sample_rate'] = 0.0
+                    self.config['memory']['max_history_length'] = 2
+
                 # Apply loaded config values
                 self.embed_dim = self.config['model']['embed_dim']
                 self.num_heads = self.config['model']['num_heads']
@@ -385,7 +419,8 @@ class AtlasBrain:
             transformer_config = {
                 'vocab_size': self.vocab_size,
                 'model': self.config['model'],
-                'generation': self.config['generation']
+                'generation': self.config['generation'],
+                'performance': self.config.get('performance', {}) # Pass performance config safely
             }
             self.transformer = Transformer(transformer_config)
             # Update transformer's vocab size after re-initialization

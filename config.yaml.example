@@ -62,3 +62,12 @@ scraping:
   max_retries: 3
   # A base number for the exponential backoff calculation (e.g., wait time = backoff_factor * (2 ** retry_count)).
   backoff_factor: 1
+
+# Performance optimization parameters
+performance:
+  # If true, overrides model and generation settings to save RAM
+  low_memory: false
+  # Use float16 for model weights (reduces memory by ~50%)
+  half_precision: false
+  # Optional: auto-adjust model if RAM is limited (future)
+  max_ram_gb: null
