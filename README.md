@@ -50,7 +50,7 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/your-username/atlas-chat-learning.git
+    git clone https://https://github.com/CodeWithBotinaOficial/atlas-chat-learning.git
     cd atlas-chat-learning
     ```
 2.  Install dependencies:
@@ -95,6 +95,12 @@ Here's a breakdown of the configuration parameters:
 
 -   **`memory`**: Parameters for managing conversational memory.
     -   `max_history_length`: Maximum number of previous turns (user input + Atlas response) to keep in the conversation history. This provides context for future responses.
+
+-   **`scraping`**: Parameters for configuring the web scraping functionality.
+    -   `connect_timeout`: Timeout for establishing the connection to the web server in seconds.
+    -   `read_timeout`: Timeout for receiving a response from the web server in seconds.
+    -   `max_retries`: The number of times the scraper will retry fetching a URL if a transient network error (like a timeout or connection error) occurs.
+    -   `backoff_factor`: A multiplier for the exponential backoff delay between retry attempts. The wait time is calculated as `backoff_factor * (2 ** (attempt - 1))` seconds.
 
 **Important**: After modifying `config.yaml`, you need to restart Atlas for the changes to take effect.
 

@@ -87,7 +87,10 @@ def main():
                 sys.exit(0)
 
             print("[✓] Scraping and sanitizing text... (This may take a moment)")
-            scraped_text = web_scraper.scrape_article_text(args.scraping)
+            
+            # Extract scraping configuration
+            scraping_config = config.get('scraping', {})
+            scraped_text = web_scraper.scrape_article_text(args.scraping, scraping_config)
             
             if not scraped_text.strip():
                 print("[✗] No significant text content found on the page. Exiting.")

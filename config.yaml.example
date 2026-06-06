@@ -45,3 +45,14 @@ generation:
 memory:
   # Maximum number of previous turns to keep in the conversation history.
   max_history_length: 15
+
+# Web scraping configuration parameters
+scraping:
+  # Timeout for establishing the connection in seconds.
+  connect_timeout: 5
+  # Timeout for receiving a response in seconds.
+  read_timeout: 30
+  # Number of retry attempts for a failed request.
+  max_retries: 3
+  # A base number for the exponential backoff calculation (e.g., wait time = backoff_factor * (2 ** retry_count)).
+  backoff_factor: 1

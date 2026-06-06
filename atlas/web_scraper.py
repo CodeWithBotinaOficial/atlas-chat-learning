@@ -3,6 +3,7 @@ import urllib.robotparser
 from urllib.parse import urlparse
 import sys
 import os
+import time # Import time for sleep
 
 from . import text_processor
 
@@ -20,7 +21,7 @@ def check_robots_txt(url: str) -> bool:
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     robots_url = f"{base_url}/robots.txt"
     
-    rp = urllib.robotparser.RobotFileParser()
+    rp = urllib.robotparser.RobotFileFileParser()
     
     try:
         # Fetch robots.txt content using requests for better error handling
@@ -63,46 +64,75 @@ def check_robots_txt(url: str) -> bool:
     print(f"[✓] robots.txt check passed. Scraping of {url} is allowed.")
     return True
 
-def scrape_article_text(url: str) -> str:
+def scrape_article_text(url: str, scraping_config: dict) -> str:
     """
-    Fetches the HTML content of a URL and extracts the main article text.
+    Fetches the HTML content of a URL and extracts the main article text,
+    with retry mechanism and configurable timeouts.
 
     Args:
         url (str): The URL to scrape.
+        scraping_config (dict): Dictionary containing scraping configuration,
+                                including 'connect_timeout', 'read_timeout',
+                                'max_retries', and 'backoff_factor'.
 
     Returns:
         str: The cleaned and sanitized main text content of the page.
 
     Raises:
-        requests.exceptions.RequestException: If there's a network error.
+        requests.exceptions.RequestException: If there's a network error after all retries.
         Exception: For other scraping or processing errors.
     """
-    try:
-        headers = {
-            'User-Agent': 'AtlasBot/1.0 (+https://github.com/CodeWithBotinaOficial/atlas-chat-learning)' # Updated User-Agent
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
-        raw_html = response.text
-        
-        cleaned_text = text_processor.clean_text(raw_html)
-        return cleaned_text
-    except requests.exceptions.RequestException as e:
-        print(f"Network error while fetching {url}: {e}", file=sys.stderr)
-        raise
-    except Exception as e:
-        print(f"Error during scraping or text processing for {url}: {e}", file=sys.stderr)
-        raise
+    connect_timeout = scraping_config.get('connect_timeout', 5)
+    read_timeout = scraping_config.get('read_timeout', 30)
+    max_retries = scraping_config.get('max_retries', 3)
+    backoff_factor = scraping_config.get('backoff_factor', 1)
+
+    headers = {
+        'User-Agent': 'AtlasBot/1.0 (+https://github.com/CodeWithBotinaOficial/atlas-chat-learning)'
+    }
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"Attempt {attempt} of {max_retries} to scrape {url}...")
+            response = requests.get(url, headers=headers, timeout=(connect_timeout, read_timeout))
+            response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+            raw_html = response.text
+            
+            cleaned_text = text_processor.clean_text(raw_html)
+            return cleaned_text
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+            if attempt < max_retries:
+                sleep_time = backoff_factor * (2 ** (attempt - 1))
+                print(f"⚠️ Request timed out or connection error: {e}. Retrying in {sleep_time} seconds (Attempt {attempt} of {max_retries})...", file=sys.stderr)
+                time.sleep(sleep_time)
+            else:
+                print(f"❌ Failed to scrape {url} after {max_retries} attempts due to network issues: {e}", file=sys.stderr)
+                sys.exit(1) # Exit gracefully after all retries fail
+        except requests.exceptions.RequestException as e:
+            print(f"Network error while fetching {url}: {e}", file=sys.stderr)
+            sys.exit(1) # Exit gracefully for other request exceptions
+        except Exception as e:
+            print(f"Error during scraping or text processing for {url}: {e}", file=sys.stderr)
+            sys.exit(1) # Exit gracefully for other unexpected errors
+    return "" # Should not be reached if sys.exit is called
 
 if __name__ == '__main__':
     # Example usage
+    # For testing, create a dummy config
+    dummy_scraping_config = {
+        'connect_timeout': 5,
+        'read_timeout': 10, # Shorter timeout for testing retries
+        'max_retries': 3,
+        'backoff_factor': 1
+    }
+
     # Test with a URL that should be allowed (e.g., a blog post)
     test_allowed_url = "https://blog.codewithbotina.com/es/posts/recreacion-moderna-de-pac-man-aprende-a-desarrollar-juegos-cross-platform-con-net-y-avalonia-ui"
     print(f"\n--- Testing robots.txt for ALLOWED URL: {test_allowed_url} ---")
     if check_robots_txt(test_allowed_url):
         print("Scraping allowed. Attempting to scrape...")
         try:
-            text = scrape_article_text(test_allowed_url)
+            text = scrape_article_text(test_allowed_url, dummy_scraping_config)
             print("\n--- Scraped Text Sample (first 500 chars) ---")
             print(text[:500])
             print("...")
