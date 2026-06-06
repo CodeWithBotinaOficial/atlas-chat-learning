@@ -4,11 +4,7 @@ from urllib.parse import urlparse
 import sys
 import os
 
-try:
-    from . import text_processor
-except ImportError:
-    # Handle direct execution or different import paths
-    import text_processor
+from . import text_processor
 
 def check_robots_txt(url: str) -> bool:
     """

@@ -58,26 +58,70 @@ The model's capacity has been adjusted to smaller, more stable values (`embed_di
     pip install -r requirements.txt
     ```
 
-### Running Atlas
+### Configuration
 
-To start chatting with Atlas, run the `main.py` script. You can specify different execution modes:
+Atlas uses a `config.yaml` file to manage its hyperparameters. To get started, copy the example configuration:
 
--   **Dual Mode (Default)**: Learn from your input and generate responses.
+```bash
+cp config.yaml.example config.yaml
+```
+
+Then, open `config.yaml` in a text editor and adjust the parameters as needed.
+
+Here's a breakdown of the configuration parameters:
+
+-   **`model`**: Defines the Transformer model's architecture.
+    -   `embed_dim`: Dimension of the token embeddings. This is the size of the vector used to represent each word. Larger values allow for more complex representations but increase memory usage and computation.
+    -   `num_heads`: Number of attention heads in the multi-head attention mechanism. More heads allow the model to jointly attend to information from different representation subspaces.
+    -   `ff_dim`: Dimension of the feed-forward network within each Transformer block.
+    -   `num_layers`: Number of Transformer encoder/decoder layers. More layers increase the model's depth and capacity.
+    -   `max_seq_len`: Maximum sequence length the model can handle. This limits how many tokens (words) can be in an input or generated response.
+    -   `dropout_rate`: Dropout rate for regularization. A fraction of neurons are randomly ignored during training to prevent overfitting.
+
+-   **`training`**: Parameters related to the model's learning process.
+    -   `learning_rate`: The initial learning rate for the optimizer. Controls the step size at each iteration while moving towards a minimum of the loss function.
+    -   `lr_decay_rate`: Rate at which the learning rate decays over time.
+    -   `lr_decay_steps`: Number of interactions after which the learning rate decays.
+    -   `replay_buffer_size`: Maximum size of the replay buffer for experience replay. This stores past interactions for re-training.
+    -   `replay_sample_rate`: Probability of sampling from the replay buffer during training.
+
+-   **`generation`**: Parameters controlling how Atlas generates responses.
+    -   `temperature`: Controls the randomness of predictions. Lower values (e.g., 0.1-0.5) make the model more deterministic and focused, while higher values (e.g., 0.8-1.0) increase creativity and diversity.
+    -   `repetition_penalty`: Penalizes repeated tokens to encourage diverse responses. A value greater than 1.0 discourages repetition.
+    -   `top_k`: Limits the sampling pool to the top K most likely next tokens. For example, `top_k: 40` means only the 40 most probable next words are considered.
+    -   `top_p`: (Nucleus Sampling) Limits the sampling pool to the smallest set of tokens whose cumulative probability exceeds P. For example, `top_p: 0.95` means tokens are selected from the smallest set whose probabilities sum up to at least 95%.
+    -   `beam_width`: If greater than 0, enables beam search decoding with this width. Beam search explores multiple possible sequences simultaneously. If `0`, greedy or sampling is used.
+    -   `max_new_tokens`: Maximum number of new tokens to generate in a response.
+
+-   **`memory`**: Parameters for managing conversational memory.
+    -   `max_history_length`: Maximum number of previous turns (user input + Atlas response) to keep in the conversation history. This provides context for future responses.
+
+**Important**: After modifying `config.yaml`, you need to restart Atlas for the changes to take effect.
+
+### Execution Modes
+
+To start chatting with Atlas, run the `main.py` script. You can specify different execution modes using command-line arguments:
+
+-   **`--dual` (Default Mode)**:
+    -   **Use Case**: General interactive conversation where Atlas learns from your input and generates responses. This is the standard mode for continuous improvement.
+    -   **Behavior**: Processes your input, updates its model, and then generates a reply.
     ```bash
     python main.py
-    ```
-    or
-    ```bash
+    # or explicitly
     python main.py --dual
     ```
 
--   **Training Mode**: Only learn from your input. Atlas will process your messages and update its model, but will not generate responses. This is useful for focused training without interaction overhead.
+-   **`--training` (Training-Only Mode)**:
+    -   **Use Case**: Focused training without interaction overhead. Useful for feeding large datasets or specific learning materials to Atlas without needing immediate responses.
+    -   **Behavior**: Only learns from your input and updates its model. It will not generate responses.
+    -   **Output**: Prints a `.` for each successful learning step or `x` if learning was skipped (e.g., due to short input).
     ```bash
     python main.py --training
     ```
-    In this mode, Atlas will print a `.` for each successful learning step or `x` if learning was skipped (e.g., due to short input).
 
--   **Production Mode**: Only generate responses. Atlas will use its current learned model to respond but will not update its weights. This is suitable for deployment where you want stable responses without further learning.
+-   **`--production` (Production-Only Mode)**:
+    -   **Use Case**: Deployment scenarios where you want stable responses without further learning. Ideal for integrating Atlas into applications where its behavior should be consistent.
+    -   **Behavior**: Only generates responses using its current learned model. It will not update its weights or learn from new input.
     ```bash
     python main.py --production
     ```
@@ -85,6 +129,8 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
 ### Web Scraping Training
 
 Atlas can also learn directly from web content. Use the `--scraping` argument followed by a URL to fetch, sanitize, and train the model with the text from a webpage.
+
+**Dependencies**: For web scraping, ensure you have `requests`, `beautifulsoup4`, and `lxml` installed (`pip install requests beautifulsoup4 lxml`). `lxml` is highly recommended for performance; if not available, `html.parser` will be used with a warning.
 
 **Important Considerations:**
 -   **`robots.txt` Compliance**: The script will first check the target website's `robots.txt` file. If scraping the specified URL is disallowed for `User-agent: AtlasBot` or `User-agent: *`, the process will be halted. If `robots.txt` is not found, scraping is assumed to be allowed.
@@ -108,48 +154,15 @@ Do you want to scrape this page and train the AI? (y/n): y
 [✓] Training complete! Model saved. Exiting.
 ```
 
-### Configuration
+### Grammar Post-processing
 
-Atlas uses a `config.yaml` file to manage its hyperparameters. A default `config.yaml` is provided in the project root.
+Atlas's responses undergo a post-processing step to improve their readability and grammatical correctness. This includes:
+-   **Capitalization**: Ensures sentences start with a capital letter.
+-   **Punctuation**: Adds appropriate punctuation (e.g., periods, question marks) at the end of sentences.
+-   **Repetition Removal**: Detects and removes excessive repetition of words or phrases within a short span.
+-   **Gibberish Detection**: Attempts to identify and filter out responses that appear to be random or nonsensical.
 
-You can specify a custom configuration file using the `--config` argument:
-```bash
-python main.py --config my_custom_config.yaml
-```
-
-If `config.yaml` is not found, a default one will be generated, and Atlas will exit, prompting you to review and restart.
-
-The `config.yaml` structure includes:
-
-```yaml
-model:
-  embed_dim: 32          # Dimension of token embeddings
-  num_heads: 2           # Number of attention heads
-  ff_dim: 64             # Dimension of the feed-forward network
-  num_layers: 2          # Number of transformer blocks
-  max_seq_len: 50        # Maximum sequence length for input/output
-  dropout_rate: 0.1      # Dropout rate for regularization
-
-training:
-  learning_rate: 0.001   # Initial learning rate
-  lr_decay_rate: 0.95    # Rate at which learning rate decays
-  lr_decay_steps: 100    # Number of interactions after which LR decays
-  replay_buffer_size: 10 # Size of the replay buffer for experience replay
-  replay_sample_rate: 0.3 # Probability of sampling from replay buffer during training
-
-generation:
-  temperature: 0.8       # Controls randomness in sampling (higher = more random)
-  repetition_penalty: 1.2 # Penalizes repeating tokens
-  top_k: 20              # Only consider top_k tokens for sampling
-  top_p: 0.9             # Only consider tokens whose cumulative probability exceeds top_p
-  beam_width: 0          # If > 0, use beam search with this width (0 for greedy/sampling)
-  max_new_tokens: 20     # Maximum number of new tokens to generate in a response
-
-memory:
-  max_history_length: 5  # Number of past conversation turns to keep in memory
-```
-
-**Important**: After modifying `config.yaml`, you need to restart Atlas for the changes to take effect.
+This step aims to make the AI's output feel more natural and polished, even if the underlying model is still learning.
 
 ## Pre-trained Model (Optional)
 
@@ -210,11 +223,21 @@ This continuous learning process allows Atlas to adapt to your conversational st
 -   **Grammar Post-Processing**: While improving readability, the rule-based grammar corrections do not make the underlying model smarter or improve its semantic understanding. They are purely for presentational enhancement.
 -   **Computational Cost**: Training is done on the CPU using NumPy, which is slower than GPU-accelerated frameworks.
 
-## Performance Requirements
+## Hardware Requirements
 
--   **`--dual` mode**: Requires a modern CPU (e.g., 2+ GHz, 4 cores) for a responsive experience. May be slow on low-end machines.
--   **`--training` mode**: Lighter on resources as it skips response generation.
--   **`--production` mode**: Lighter on resources as it skips learning.
+The computational resources required depend heavily on the `model` configuration parameters, especially `embed_dim`, `num_heads`, `ff_dim`, `num_layers`, and `max_seq_len`.
+
+-   **Small Configuration (e.g., default `config.yaml`)**:
+    -   **RAM**: Minimum 4GB, 8GB recommended.
+    -   **CPU**: Any modern multi-core CPU (e.g., Intel i3/i5 or AMD Ryzen 3/5 equivalent) from the last 5-7 years should suffice for interactive use. Training will be slower but manageable.
+    -   **Disk Space**: Negligible (model files are small, typically < 10MB).
+
+-   **Larger Configuration (e.g., `embed_dim: 512`, `num_layers: 8`, `max_seq_len: 256`)**:
+    -   **RAM**: Minimum 16GB, 32GB+ recommended. The memory footprint grows significantly with `embed_dim` and `max_seq_len`.
+    -   **CPU**: A powerful multi-core CPU (e.g., Intel i7/i9 or AMD Ryzen 7/9 equivalent) is highly recommended for reasonable training and response generation times.
+    -   **Disk Space**: Model files can grow to tens or hundreds of MBs.
+
+**General Recommendation**: For a smooth interactive experience and faster training, a system with at least 8GB RAM and a quad-core CPU is advisable. If you plan to experiment with significantly larger models or extensive web scraping, consider a machine with 16GB+ RAM.
 
 ## Troubleshooting
 

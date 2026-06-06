@@ -2,11 +2,10 @@
 import numpy as np
 import pickle
 import re
-from collections import defaultdict
 import os
 import random
 
-from atlas.transformer import Transformer, softmax, label_smoothing_loss
+from atlas.transformer import Transformer
 from atlas.grammar import GrammarHelper # Import GrammarHelper
 from atlas.config_loader import load_config # Import load_config
 
@@ -150,7 +149,7 @@ class AtlasBrain:
              return None, None
 
         if len(full_sequence_ids) > self.max_seq_len:
-            full_sequence_ids = full_sequence_ids[len(full_sequence_ids) - self.max_seq_len:]
+            full_sequence_ids = full_sequence_ids[len(full_sequence_ids) - (self.max_seq_len - 1):] # Truncate to max_seq_len - 1 to leave space for BOS/EOS
 
         input_ids = full_sequence_ids[:-1]
         target_ids = full_sequence_ids[1:]
@@ -401,8 +400,7 @@ class AtlasBrain:
                     if self.transformer.params[k].shape == v.shape:
                         self.transformer.params[k][:] = v  # Use [:] to modify in-place
                     else:
-                        print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter. "
-                              f"Expected {self.transformer.params[k].shape}, got {v.shape}.")
+                        print(f"WARNING: Parameter {k} shape mismatch. This may happen if you changed model hyperparameters. Consider deleting atlas_model.npz and retraining. Expected {self.transformer.params[k].shape}, got {v.shape}.")
 
                 # Handle nested parameters for blocks, attention, and feed_forward
                 for i, block in enumerate(self.transformer.transformer_blocks):
@@ -413,21 +411,21 @@ class AtlasBrain:
                                 if block.attention.params[attn_param_name].shape == v.shape:
                                     block.attention.params[attn_param_name][:] = v
                                 else:
-                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
+                                    print(f"WARNING: Parameter {k} shape mismatch. This may happen if you changed model hyperparameters. Consider deleting atlas_model.npz and retraining. Skipping load for this parameter.")
                         elif k.startswith(f'block_{i}_ff_'):
                             ff_param_name = k[len(f'block_{i}_ff_'):]
                             if ff_param_name in block.feed_forward.params:
                                 if block.feed_forward.params[ff_param_name].shape == v.shape:
                                     block.feed_forward.params[ff_param_name][:] = v
                                 else:
-                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
+                                    print(f"WARNING: Parameter {k} shape mismatch. This may happen if you changed model hyperparameters. Consider deleting atlas_model.npz and retraining. Skipping load for this parameter.")
                         else:  # Block's own parameters (e.g., layer norm gamma/beta)
                             block_param_name = k[len(f'block_{i}_'):]
                             if block_param_name in block.params:
                                 if block.params[block_param_name].shape == v.shape:
                                     block.params[block_param_name][:] = v
                                 else:
-                                    print(f"WARNING: Shape mismatch for parameter {k}. Skipping load for this parameter.")
+                                    print(f"WARNING: Parameter {k} shape mismatch. This may happen if you changed model hyperparameters. Consider deleting atlas_model.npz and retraining. Skipping load for this parameter.")
             # print(f"Model and brain state loaded from {self.model_path} and {self.vocab_path}")
         else:
             print("No saved model or vocabulary found. Starting with a fresh model.")

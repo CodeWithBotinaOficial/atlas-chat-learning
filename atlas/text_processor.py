@@ -26,7 +26,18 @@ def clean_text(raw_html: str) -> str:
     if not raw_html:
         return ""
 
-    soup = BeautifulSoup(raw_html, 'lxml') # Using 'lxml' parser for better performance and robustness
+    parser_to_use = 'lxml'
+    try:
+        BeautifulSoup("", 'lxml') # Test if lxml is available
+    except ImportError:
+        print("WARNING: 'lxml' not installed, using built-in 'html.parser' (slower).", file=sys.stderr)
+        parser_to_use = 'html.parser'
+    except Exception:
+        # Catch other potential errors during lxml test, e.g., if it's installed but broken
+        print("WARNING: Error testing 'lxml' parser, using built-in 'html.parser' (slower).", file=sys.stderr)
+        parser_to_use = 'html.parser'
+
+    soup = BeautifulSoup(raw_html, parser_to_use)
 
     # Remove script and style elements
     for script_or_style in soup(['script', 'style']):
@@ -154,7 +165,6 @@ if __name__ == '__main__':
                     <h2>The Wonders of Python</h2>
                     <p>Python is a versatile language. It's used everywhere from web development to data science. Its simplicity makes it a great choice for beginners.</p>
                     <p>One of Python's strengths is its extensive ecosystem of libraries. Libraries like NumPy, Pandas, and Scikit-learn are indispensable for data analysis.</p>
-                    <h3>Getting Started</h3>
                     <p>To start with Python, you typically install it from python.org. Then, you can use pip to install packages.</p>
                     <pre><code>pip install requests beautifulsoup4</code></pre>
                     <p>This is a final thought on the topic.</p>

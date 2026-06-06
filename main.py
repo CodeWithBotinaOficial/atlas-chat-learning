@@ -17,8 +17,8 @@ from atlas.config_loader import load_config # Import load_config
 try:
     import requests
     from bs4 import BeautifulSoup
-    import web_scraper
-    import text_processor
+    from atlas import web_scraper
+    from atlas import text_processor
 except ImportError:
     # These will be handled specifically if --scraping is used
     pass

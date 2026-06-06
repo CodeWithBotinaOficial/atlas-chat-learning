@@ -519,11 +519,26 @@ def _top_k_top_p_sampling(logits, vocab_size, top_k=0, top_p=1.0, temperature=1.
 
     probabilities = softmax(logits[np.newaxis, :])[0]
 
-    # Check for NaN in probabilities
-    if np.any(np.isnan(probabilities)):
-        print("WARNING: NaN detected in probabilities during sampling. Falling back to greedy (argmax).")
-        # Fallback to greedy (argmax)
-        return np.argmax(logits)
+    # Check for NaN or Inf in probabilities
+    if np.any(np.isnan(probabilities)) or np.any(np.isinf(probabilities)):
+        print("WARNING: NaN or Inf detected in probabilities during sampling.")
+        # Fallback strategy: find valid indices in logits
+        valid_indices = np.where(~np.isnan(logits) & ~np.isinf(logits))[0]
+        if len(valid_indices) > 0:
+            # Choose randomly from the top 10 valid indices based on logits
+            top_valid_indices = valid_indices[np.argsort(logits[valid_indices])][::-1][:min(10, len(valid_indices))]
+            if len(top_valid_indices) > 0:
+                print(f"Falling back to random choice from top {len(top_valid_indices)} valid logits.")
+                return np.random.choice(top_valid_indices)
+            else:
+                # If no valid indices in top 10, choose any valid index
+                print("Falling back to random choice from all valid logits.")
+                return np.random.choice(valid_indices)
+        else:
+            # If all logits are NaN/Inf, choose a random token from the entire vocab
+            print("WARNING: All logits are NaN/Inf. Falling back to random token from vocabulary.")
+            return np.random.randint(0, vocab_size)
+
 
     # Top-p filtering
     if top_p < 1.0:
@@ -703,7 +718,7 @@ class Transformer:
 
         # Gradients for output layer
         self.grads['output_layer'] = np.einsum('bsd,bsv->dv', self.cache_x_after_blocks, d_output_logits)
-        self.grads['output_bias'] = np.sum(d_output_logits, axis=(0, 1))
+        self.grads['b_o'] = np.sum(d_output_logits, axis=(0, 1))
         d_x_from_output = d_output_logits @ self.output_layer.T
 
         # Backward through transformer blocks
@@ -830,11 +845,25 @@ class Transformer:
 
                 probabilities = softmax(last_token_logits[np.newaxis, :])[0]
                 
-                # Check for NaN in probabilities
-                if np.any(np.isnan(probabilities)):
-                    print("WARNING: NaN detected in probabilities during beam search sampling. Falling back to greedy (argmax).")
-                    next_token_id = np.argmax(last_token_logits) # Use raw logits for greedy
-                    new_log_prob = log_prob + np.log(probabilities[next_token_id]) if probabilities[next_token_id] > 0 else -np.inf
+                # Check for NaN or Inf in probabilities
+                if np.any(np.isnan(probabilities)) or np.any(np.isinf(probabilities)):
+                    print("WARNING: NaN or Inf detected in probabilities during beam search sampling.")
+                    # Fallback strategy: if logits are also problematic, choose randomly from top 10 valid indices
+                    valid_indices = np.where(~np.isnan(last_token_logits) & ~np.isinf(last_token_logits))[0]
+                    if len(valid_indices) > 0:
+                        top_valid_indices = valid_indices[np.argsort(last_token_logits[valid_indices])][::-1][:min(10, len(valid_indices))]
+                        if len(top_valid_indices) > 0:
+                            print(f"Falling back to random choice from top {len(top_valid_indices)} valid logits for beam search.")
+                            next_token_id = np.random.choice(top_valid_indices)
+                        else:
+                            print("Falling back to random choice from all valid logits for beam search.")
+                            next_token_id = np.random.choice(valid_indices)
+                    else:
+                        print("WARNING: All logits are NaN/Inf. Falling back to random token from vocabulary for beam search.")
+                        next_token_id = np.random.randint(0, self.vocab_size)
+                    
+                    # Assign a very low probability to this fallback token to keep beam search stable
+                    new_log_prob = log_prob + np.log(1e-6)
                     new_sequence = current_sequence + [next_token_id]
                     all_candidates.append((new_log_prob, new_sequence))
                     continue # Skip other candidates for this beam if NaN

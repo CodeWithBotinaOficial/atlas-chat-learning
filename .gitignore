@@ -3,8 +3,12 @@ __pycache__/
 *.pyc
 *.pyd
 *.pyo
-*.pkl
-*.npz
+
+# Atlas specific generated files
+atlas_model.npz
+atlas_vocab.pkl
+config.yaml
+*.log
 
 # IDE-specific files
 .idea/
@@ -13,6 +17,9 @@ __pycache__/
 # Virtual environment
 venv/
 env/
+
+# Test cache
+.pytest_cache/
 
 # OS generated files
 .DS_Store

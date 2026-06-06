@@ -1,0 +1,47 @@
+# Model configuration parameters
+model:
+  # Dimension of the embedding space for tokens.
+  embed_dim: 256
+  # Number of attention heads in the multi-head attention mechanism.
+  num_heads: 8
+  # Dimension of the feed-forward network in the Transformer blocks.
+  ff_dim: 1024
+  # Number of Transformer encoder/decoder layers.
+  num_layers: 6
+  # Maximum sequence length the model can handle.
+  max_seq_len: 512
+  # Dropout rate for regularization to prevent overfitting.
+  dropout_rate: 0.1
+
+# Training configuration parameters
+training:
+  # Initial learning rate for the optimizer.
+  learning_rate: 0.0003
+  # Rate at which the learning rate decays over time.
+  lr_decay_rate: 0.95
+  # Number of steps after which the learning rate decays.
+  lr_decay_steps: 100
+  # Maximum size of the replay buffer for experience replay.
+  replay_buffer_size: 200
+  # Proportion of samples to draw from the replay buffer during training.
+  replay_sample_rate: 0.3
+
+# Text generation configuration parameters
+generation:
+  # Controls the randomness of predictions. Lower values make the model more deterministic.
+  temperature: 0.3
+  # Penalizes repeated tokens to encourage diverse responses.
+  repetition_penalty: 1.2
+  # Limits the sampling pool to the top K most likely next tokens.
+  top_k: 40
+  # Limits the sampling pool to the smallest set of tokens whose cumulative probability exceeds P.
+  top_p: 0.95
+  # Number of beams to use for beam search decoding.
+  beam_width: 5
+  # Maximum number of new tokens to generate in a response.
+  max_new_tokens: 300
+
+# Memory management configuration parameters
+memory:
+  # Maximum number of previous turns to keep in the conversation history.
+  max_history_length: 15
