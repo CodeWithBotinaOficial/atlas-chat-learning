@@ -41,10 +41,11 @@ generation:
   top_k: 40
   # Limits the sampling pool to the smallest set of tokens whose cumulative probability exceeds P.
   top_p: 0.95
-  # Number of beams to use for beam search decoding.
-  beam_width: 5
+  # Number of beams to use for beam search decoding (0 disables beam search for faster generation).
+  beam_width: 0
   # Maximum number of new tokens to generate in a response.
   max_new_tokens: 300
+  # fast_mode: false  # Use CLI flag --fast with --production for low-latency greedy decoding.
 
 # Memory management configuration parameters
 memory:

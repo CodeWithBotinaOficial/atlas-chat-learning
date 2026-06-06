@@ -97,7 +97,7 @@ Here's a breakdown of the configuration parameters:
     -   `repetition_penalty`: Penalizes repeated tokens to encourage diverse responses. A value greater than 1.0 discourages repetition.
     -   `top_k`: Limits the sampling pool to the top K most likely next tokens. For example, `top_k: 40` means only the 40 most probable next words are considered.
     -   `top_p`: (Nucleus Sampling) Limits the sampling pool to the smallest set of tokens whose cumulative probability exceeds P. For example, `top_p: 0.95` means tokens are selected from the smallest set whose probabilities sum up to at least 95%.
-    -   `beam_width`: If greater than 0, enables beam search decoding with this width. Beam search explores multiple possible sequences simultaneously. If `0`, greedy or sampling is used.
+    -   `beam_width`: If greater than 0, enables beam search decoding with this width. Beam search explores multiple possible sequences simultaneously and is slower. Default is `0` (disabled) for faster generation; use sampling or `--fast` instead.
     -   `max_new_tokens`: Maximum number of new tokens to generate in a response.
 
 -   **`memory`**: Parameters for managing conversational memory.
@@ -138,6 +138,14 @@ To start chatting with Atlas, run the `main.py` script. You can specify differen
     ```bash
     python main.py --production
     ```
+
+-   **`--fast` (Low-Latency Generation)**:
+    -   **Use Case**: Interactive deployments where response speed matters more than sampling diversity. Best combined with `--production`.
+    -   **Behavior**: Enables greedy decoding (`temperature=0.01`, `top_k=1`, `beam_width=0`, `top_p=1.0`). Generation also uses **KV caching** in the Transformer so each new token reuses cached attention keys/values instead of recomputing the full sequence.
+    ```bash
+    python main.py --production --fast
+    ```
+    For fastest responses, also set `beam_width: 0` in `config.yaml` (now the default in `config.yaml.example`).
 
 ### Training from Documents
 
@@ -271,7 +279,7 @@ This continuous learning process allows Atlas to adapt to your conversational st
 -   `config.yaml`: Configuration file for hyperparameters.
 -   `atlas/`: Contains the core logic.
     -   `brain.py`: Manages the chatbot's overall logic, including tokenization, vocabulary management, conversation history, replay buffer, and orchestrating the Transformer.
-    -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
+    -   `transformer.py`: Implements the Transformer architecture from scratch using NumPy, including Multi-Head Self-Attention, Feed-Forward Networks, Positional Encoding, Layer Normalization, Residual Connections, Dropout, KV caching for fast inference, and advanced generation methods (Top-K, Top-P, Beam Search). Now includes numerical stability improvements and gradient clipping.
     -   `grammar.py`: Contains the `GrammarHelper` class for post-processing generated responses to improve readability and structure.
     -   `config_loader.py`: Module to load and manage the `config.yaml` file.
     -   `document_loader.py`: Loads and extracts text from PDF, DOCX, TXT, and MD files (local or remote).

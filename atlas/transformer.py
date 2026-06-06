@@ -153,15 +153,16 @@ class PositionalEncoding:
         pe[:, 1::2] = np.cos(position * div_term)
         return pe[np.newaxis, :, :]  # Add batch dimension (1, max_seq_len, embed_dim)
 
-    def forward(self, x):
+    def forward(self, x, start_pos=0):
         """
         Adds positional encoding to the input embeddings.
         x: (batch_size, seq_len, embed_dim)
+        start_pos: int - position offset for incremental decoding with KV cache.
         Returns: (batch_size, seq_len, embed_dim)
         """
         seq_len = x.shape[1]
         # Positional encoding is broadcasted across the batch dimension
-        return x + self.pe[:, :seq_len, :]
+        return x + self.pe[:, start_pos:start_pos + seq_len, :]
 
 
 class MultiHeadSelfAttention:
@@ -213,12 +214,13 @@ class MultiHeadSelfAttention:
         """
         return x.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, self.embed_dim)
 
-    def forward(self, x, mask=None, training=True):
+    def forward(self, x, mask=None, training=True, kv_cache_entry=None):
         """
         Forward pass for Multi-Head Self-Attention.
         x: (batch_size, seq_len, embed_dim)
         mask: (1, 1, seq_len, seq_len) or None. Additive mask for attention scores.
         training: boolean, if True, apply dropout.
+        kv_cache_entry: optional dict with cached 'k' and 'v' arrays for inference.
         Returns: (batch_size, seq_len, embed_dim)
         """
         batch_size, seq_len, _ = x.shape
@@ -230,8 +232,20 @@ class MultiHeadSelfAttention:
 
         # Split into multiple heads
         Q_heads = self._split_heads(Q, batch_size, seq_len)
-        K_heads = self._split_heads(K, batch_size, seq_len)
-        V_heads = self._split_heads(V, batch_size, seq_len)
+        K_heads_new = self._split_heads(K, batch_size, seq_len)
+        V_heads_new = self._split_heads(V, batch_size, seq_len)
+
+        use_kv_cache = kv_cache_entry is not None and not training
+        if use_kv_cache and kv_cache_entry.get('k') is not None:
+            K_heads = np.concatenate([kv_cache_entry['k'], K_heads_new], axis=2)
+            V_heads = np.concatenate([kv_cache_entry['v'], V_heads_new], axis=2)
+        else:
+            K_heads = K_heads_new
+            V_heads = V_heads_new
+
+        if use_kv_cache:
+            kv_cache_entry['k'] = K_heads
+            kv_cache_entry['v'] = V_heads
 
         # Scaled Dot-Product Attention
         attention_scores = Q_heads @ K_heads.transpose(0, 1, 3, 2)
@@ -401,20 +415,28 @@ class TransformerBlock:
         }
         self.grads = {k: np.zeros_like(v) for k, v in self.params.items()}
 
-    def forward(self, x, mask=None, training=True):
+    def forward(self, x, mask=None, training=True, cache=None, layer_idx=0):
         """
         Forward pass for a Transformer block.
         x: (batch_size, seq_len, embed_dim)
         mask: (1, 1, seq_len, seq_len) or None.
         training: boolean, if True, apply dropout.
+        cache: optional KV cache dict keyed by layer index.
+        layer_idx: int - index of this block in the transformer stack.
         Returns: (batch_size, seq_len, embed_dim)
         """
         # Layer norm 1
         norm1_out, self.norm1_mean, self.norm1_variance, self.norm1_x_normalized = layer_norm(x, self.norm1_gamma,
                                                                                               self.norm1_beta)
 
+        kv_cache_entry = None
+        if cache is not None and not training:
+            if layer_idx not in cache:
+                cache[layer_idx] = {'k': None, 'v': None}
+            kv_cache_entry = cache[layer_idx]
+
         # Attention
-        attn_output = self.attention.forward(norm1_out, mask, training)
+        attn_output = self.attention.forward(norm1_out, mask, training, kv_cache_entry=kv_cache_entry)
 
         # Residual connection 1
         attn_output_residual = x + attn_output
@@ -718,14 +740,19 @@ class Transformer:
         mask = (mask * -1e9)  # Convert to additive mask (large negative value)
         return mask[np.newaxis, np.newaxis, :, :]  # (1, 1, seq_len, seq_len)
 
-    def forward(self, x, training=True):
+    def forward(self, x, training=True, cache=None):
         """
         Forward pass for the Transformer model.
         x: (batch_size, seq_len) - token IDs
         training: bool, if True, applies look-ahead mask and dropout.
+        cache: optional KV cache dict for faster autoregressive inference.
+               Maps layer index -> {'k': array, 'v': array}, plus '_past_seq_len'.
         Returns: (batch_size, seq_len, vocab_size) - logits for each token.
         """
         batch_size, seq_len = x.shape
+        use_kv_cache = cache is not None and not training
+        past_seq_len = cache.get('_past_seq_len', 0) if use_kv_cache else 0
+        incremental = use_kv_cache and past_seq_len > 0 and seq_len == 1
 
         # Store token IDs for backward pass (for embedding gradients)
         self.cache_x_token_ids = x
@@ -733,15 +760,25 @@ class Transformer:
         # Token and positional embeddings (scale embeddings per original Transformer paper)
         embeddings = self.token_embedding[x]  # (batch_size, seq_len, embed_dim)
         embeddings = embeddings * math.sqrt(self.embed_dim)
-        x = self.positional_encoding.forward(embeddings)
+        start_pos = past_seq_len if incremental else 0
+        x = self.positional_encoding.forward(embeddings, start_pos=start_pos)
+
+        if use_kv_cache and not incremental:
+            for layer_idx in list(cache.keys()):
+                if isinstance(layer_idx, int):
+                    cache[layer_idx] = {'k': None, 'v': None}
+            cache['_past_seq_len'] = 0
 
         # Create look-ahead mask for decoder if training
         mask = self._create_look_ahead_mask(seq_len) if training else None
         self.cache_mask = mask  # Cache the mask for backward pass in blocks
 
         # Transformer blocks
-        for block in self.transformer_blocks:
-            x = block.forward(x, mask, training)
+        for layer_idx, block in enumerate(self.transformer_blocks):
+            x = block.forward(x, mask, training, cache=cache, layer_idx=layer_idx)
+
+        if use_kv_cache:
+            cache['_past_seq_len'] = past_seq_len + seq_len
 
         # Store output of last block for backward pass (input to final linear layer)
         self.cache_x_after_blocks = x
@@ -947,18 +984,25 @@ class Transformer:
 
         generated_tokens = list(prompt_tokens[0])
         batch_size = 1  # Generation is always batch size 1
+        kv_cache = {}
 
-        for _ in range(self.max_new_tokens):
-            current_seq_len = len(generated_tokens)
-            if current_seq_len == 0:
+        for step in range(self.max_new_tokens):
+            if len(generated_tokens) == 0:
                 break
 
-            # Truncate if sequence exceeds max_seq_len
-            input_seq = generated_tokens[-self.max_seq_len:]
-            input_tensor = np.array(input_seq).reshape(batch_size, -1)
-
-            # Forward pass (no training mask)
-            output_logits = self.forward(input_tensor, training=False)
+            if len(generated_tokens) > self.max_seq_len:
+                # Truncation requires a full recomputation of the KV cache.
+                input_seq = generated_tokens[-self.max_seq_len:]
+                kv_cache = {}
+                input_tensor = np.array(input_seq).reshape(batch_size, -1)
+                output_logits = self.forward(input_tensor, training=False, cache=kv_cache)
+            elif step == 0:
+                input_tensor = np.array(generated_tokens).reshape(batch_size, -1)
+                kv_cache = {}
+                output_logits = self.forward(input_tensor, training=False, cache=kv_cache)
+            else:
+                input_tensor = np.array([[generated_tokens[-1]]])
+                output_logits = self.forward(input_tensor, training=False, cache=kv_cache)
 
             # Get logits for the last token in the sequence
             last_token_logits = output_logits[0, -1, :]

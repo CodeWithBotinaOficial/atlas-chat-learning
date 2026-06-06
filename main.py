@@ -145,6 +145,7 @@ def main():
     parser.add_argument('--file', type=str, help='Local document path (PDF, DOCX, TXT, MD) for training.')
     parser.add_argument('--url', type=str, help='Remote document URL (PDF, DOCX, TXT, MD) for training.')
     parser.add_argument('--scraping', type=str, help='Scrape content from the given URL, sanitize it, and use it to train the AI.')
+    parser.add_argument('--fast', action='store_true', help='Enable fast greedy generation (recommended with --production).')
     args = parser.parse_args()
 
     if args.train and not args.file:
@@ -207,6 +208,19 @@ def main():
             print(f"[✗] An unexpected error occurred during scraping or training: {e}", file=sys.stderr)
             sys.exit(1)
     # --- End Web Scraping Feature ---
+
+    if args.fast:
+        if not args.production:
+            print("Warning: --fast is intended for use with --production.", file=sys.stderr)
+        brain.temperature = 0.01
+        brain.top_k = 1
+        brain.beam_width = 0
+        brain.top_p = 1.0
+        brain.transformer.temperature = 0.01
+        brain.transformer.top_k = 1
+        brain.transformer.beam_width = 0
+        brain.transformer.top_p = 1.0
+        print("Fast mode enabled: greedy sampling, no beam search.")
 
     # Determine the operating mode for interactive chat
     mode = 'dual'
