@@ -2,7 +2,6 @@ import requests
 import urllib.robotparser
 from urllib.parse import urlparse
 import sys
-import os
 import time # Import time for sleep
 
 from . import text_processor
@@ -21,7 +20,7 @@ def check_robots_txt(url: str) -> bool:
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     robots_url = f"{base_url}/robots.txt"
     
-    rp = urllib.robotparser.RobotFileFileParser()
+    rp = urllib.robotparser.RobotFileParser() # Corrected typo here
     
     try:
         # Fetch robots.txt content using requests for better error handling
