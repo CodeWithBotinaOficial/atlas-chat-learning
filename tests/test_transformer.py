@@ -310,9 +310,9 @@ def test_transformer_learning_reduces_loss():
 
     initial_loss = transformer.train_step(input_padded, target_padded, learning_rate, training=True)
 
-    # Train for a few steps
+    # Train for enough steps to overcome learning rate warmup
     losses = [initial_loss]
-    for _ in range(10):  # 10 training steps
+    for _ in range(100):
         loss = transformer.train_step(input_padded, target_padded, learning_rate, training=True)
         losses.append(loss)
 

@@ -613,8 +613,14 @@ class Transformer:
         self.transformer_blocks = [
             TransformerBlock(self.embed_dim, self.num_heads, self.ff_dim, self.dropout_rate) for _ in range(self.num_layers)
         ]
-        self.output_layer = xavier_init(self.embed_dim, self.vocab_size)
+        self.output_layer = np.random.randn(self.embed_dim, self.vocab_size) * 0.01
         self.output_bias = np.zeros(self.vocab_size)
+
+        # Adam optimizer state and warmup
+        self.warmup_steps = 1000
+        self.train_step_count = 0
+        self.m = {}
+        self.v = {}
 
         # Collect all parameters into a single dictionary for easy access and saving
         self.params = {
@@ -639,6 +645,32 @@ class Transformer:
                 self.params[f'block_{i}_ff_{k}'] = v
             for k, v in block.feed_forward.grads.items():
                 self.grads[f'block_{i}_ff_{k}'] = v
+
+        self._init_optimizer_state()
+
+    def _init_optimizer_state(self):
+        """Initialize Adam first and second moment estimates for all parameters."""
+        self.m = {k: np.zeros_like(v) for k, v in self.params.items()}
+        self.v = {k: np.zeros_like(v) for k, v in self.params.items()}
+
+    def _collect_all_grads(self):
+        """Collect gradients from all model parameters into a single dictionary."""
+        all_grads = {}
+        for k in ['token_embedding', 'output_layer', 'output_bias']:
+            if k in self.grads:
+                all_grads[k] = self.grads[k]
+
+        for i, block in enumerate(self.transformer_blocks):
+            for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
+                if k in block.grads:
+                    all_grads[f'block_{i}_{k}'] = block.grads[k]
+            for k in block.attention.grads.keys():
+                if k in block.attention.grads:
+                    all_grads[f'block_{i}_attn_{k}'] = block.attention.grads[k]
+            for k in block.feed_forward.grads.keys():
+                if k in block.feed_forward.grads:
+                    all_grads[f'block_{i}_ff_{k}'] = block.feed_forward.grads[k]
+        return all_grads
 
     def update_vocab_size(self, new_vocab_size):
         """
@@ -667,6 +699,14 @@ class Transformer:
             self.params['output_bias'] = self.output_bias  # Update reference
             self.grads['output_bias'] = np.zeros_like(self.output_bias)  # Reset grads for new shape
 
+            # Expand Adam optimizer state for new vocabulary entries
+            self.m['token_embedding'] = np.zeros_like(self.token_embedding)
+            self.v['token_embedding'] = np.zeros_like(self.token_embedding)
+            self.m['output_layer'] = np.zeros_like(self.output_layer)
+            self.v['output_layer'] = np.zeros_like(self.output_layer)
+            self.m['output_bias'] = np.zeros_like(self.output_bias)
+            self.v['output_bias'] = np.zeros_like(self.output_bias)
+
             self.vocab_size = new_vocab_size
 
     def _create_look_ahead_mask(self, seq_len):
@@ -690,8 +730,9 @@ class Transformer:
         # Store token IDs for backward pass (for embedding gradients)
         self.cache_x_token_ids = x
 
-        # Token and positional embeddings
+        # Token and positional embeddings (scale embeddings per original Transformer paper)
         embeddings = self.token_embedding[x]  # (batch_size, seq_len, embed_dim)
+        embeddings = embeddings * math.sqrt(self.embed_dim)
         x = self.positional_encoding.forward(embeddings)
 
         # Create look-ahead mask for decoder if training
@@ -718,7 +759,7 @@ class Transformer:
 
         # Gradients for output layer
         self.grads['output_layer'] = np.einsum('bsd,bsv->dv', self.cache_x_after_blocks, d_output_logits)
-        self.grads['b_o'] = np.sum(d_output_logits, axis=(0, 1))
+        self.grads['output_bias'] = np.sum(d_output_logits, axis=(0, 1))
         d_x_from_output = d_output_logits @ self.output_layer.T
 
         # Backward through transformer blocks
@@ -726,11 +767,12 @@ class Transformer:
         for block in reversed(self.transformer_blocks):
             d_x = block.backward(d_x)
 
-        # Gradients for token embeddings
+        # Gradients for token embeddings (account for embedding scaling in forward pass)
+        embed_scale = math.sqrt(self.embed_dim)
         d_token_embedding = np.zeros_like(self.token_embedding)
         for i in range(batch_size):
             for j in range(seq_len):
-                d_token_embedding[self.cache_x_token_ids[i, j]] += d_x[i, j]
+                d_token_embedding[self.cache_x_token_ids[i, j]] += d_x[i, j] * embed_scale
         self.grads['token_embedding'] = d_token_embedding
 
     def train_step(self, input_tokens, target_tokens, learning_rate=0.01, training=True, pad_token_id=0):
@@ -770,51 +812,54 @@ class Transformer:
         d_output_logits = d_predictions.reshape(output_logits.shape)
 
         self.backward(d_output_logits)
-        self.update_weights(learning_rate)
+
+        self.train_step_count += 1
+        if self.train_step_count < self.warmup_steps:
+            effective_lr = learning_rate * (self.train_step_count / self.warmup_steps)
+        else:
+            effective_lr = learning_rate
+
+        self.update_weights_adam(effective_lr)
         return loss
 
-    def update_weights(self, learning_rate):
+    def update_weights_adam(self, learning_rate, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
-        Updates all model parameters using SGD with the computed gradients.
-        Applies gradient clipping.
+        Updates all model parameters using Adam with the computed gradients.
+        Applies gradient clipping before the Adam update.
         """
-        all_grads = {}
-        # Collect all gradients into a single dictionary
-        for k in ['token_embedding', 'output_layer', 'output_bias']:
-            if k in self.grads:
-                all_grads[k] = self.grads[k]
+        all_grads = self._collect_all_grads()
 
-        for i, block in enumerate(self.transformer_blocks):
-            for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
-                if k in block.grads:
-                    all_grads[f'block_{i}_{k}'] = block.grads[k]
-            for k in block.attention.grads.keys():
-                if k in block.attention.grads:
-                    all_grads[f'block_{i}_attn_{k}'] = block.attention.grads[k]
-            for k in block.feed_forward.grads.keys():
-                if k in block.feed_forward.grads:
-                    all_grads[f'block_{i}_ff_{k}'] = block.feed_forward.grads[k]
-        
         # Apply gradient clipping
         clip_gradients(all_grads, max_norm=5.0)
 
-        # Update weights using clipped gradients
+        t = self.train_step_count
+
+        def _adam_update(param, grad, m_key):
+            self.m[m_key] = beta1 * self.m[m_key] + (1 - beta1) * grad
+            self.v[m_key] = beta2 * self.v[m_key] + (1 - beta2) * (grad ** 2)
+            m_hat = self.m[m_key] / (1 - beta1 ** t)
+            v_hat = self.v[m_key] / (1 - beta2 ** t)
+            param -= learning_rate * m_hat / (np.sqrt(v_hat) + epsilon)
+
         for k in ['token_embedding', 'output_layer', 'output_bias']:
             if k in self.params and k in all_grads:
-                self.params[k] -= learning_rate * all_grads[k]
+                _adam_update(self.params[k], all_grads[k], k)
 
         for i, block in enumerate(self.transformer_blocks):
             for k in ['norm1_gamma', 'norm1_beta', 'norm2_gamma', 'norm2_beta']:
-                if k in block.params and f'block_{i}_{k}' in all_grads:
-                    block.params[k] -= learning_rate * all_grads[f'block_{i}_{k}']
+                grad_key = f'block_{i}_{k}'
+                if k in block.params and grad_key in all_grads:
+                    _adam_update(block.params[k], all_grads[grad_key], grad_key)
 
             for k in block.attention.params.keys():
-                if k in block.attention.params and f'block_{i}_attn_{k}' in all_grads:
-                    block.attention.params[k] -= learning_rate * all_grads[f'block_{i}_attn_{k}']
+                grad_key = f'block_{i}_attn_{k}'
+                if grad_key in all_grads:
+                    _adam_update(block.attention.params[k], all_grads[grad_key], grad_key)
 
             for k in block.feed_forward.params.keys():
-                if k in block.feed_forward.params and f'block_{i}_ff_{k}' in all_grads:
-                    block.feed_forward.params[k] -= learning_rate * all_grads[f'block_{i}_ff_{k}']
+                grad_key = f'block_{i}_ff_{k}'
+                if grad_key in all_grads:
+                    _adam_update(block.feed_forward.params[k], all_grads[grad_key], grad_key)
 
     def _beam_search_generate(self, prompt_tokens, pad_token_id, eos_token_id):
         """
@@ -873,7 +918,8 @@ class Transformer:
                 top_token_indices = np.argsort(probabilities)[::-1][:self.beam_width]
 
                 for next_token_id in top_token_indices:
-                    new_log_prob = log_prob + np.log(probabilities[next_token_id])
+                    prob = max(probabilities[next_token_id], 1e-9)
+                    new_log_prob = log_prob + np.log(prob)
                     new_sequence = current_sequence + [next_token_id]
                     all_candidates.append((new_log_prob, new_sequence))
             

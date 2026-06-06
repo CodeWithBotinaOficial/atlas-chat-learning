@@ -15,13 +15,15 @@ The core of Atlas is a Transformer neural network, implemented without any exter
 -   **Layer Normalization and Residual Connections**: For stable training.
 -   **Label Smoothing Cross-Entropy with Padding Mask**: A more robust loss function that ignores padding tokens.
 -   **Xavier/Glorot Uniform Initialization**: For more stable weight initialization.
+-   **Adam Optimizer with Learning Rate Warmup**: Adaptive per-parameter learning rates for faster convergence, with a linear warmup over the first 1000 training steps.
+-   **Embedding Scaling**: Token embeddings are scaled by `sqrt(embed_dim)` before positional encoding, following the original Transformer paper.
 -   **Gradient Clipping**: To prevent exploding gradients and improve training stability.
 
 The model's capacity has been adjusted to smaller, more stable values (`embed_dim=32`, `num_heads=2`, `ff_dim=64`, `num_layers=2`) to prevent model collapse and improve training stability. The vocabulary grows dynamically as new words are encountered, and the model's parameters are saved and loaded to retain its "memory" across sessions.
 
 ## Features
 
--   **Online Learning**: Learns from every user input, with **learning rate decay** and a **replay buffer** to reinforce past patterns.
+-   **Online Learning**: Learns from every user input, with **Adam optimization**, **learning rate warmup**, **learning rate decay**, and a **replay buffer** to reinforce past patterns.
 -   **Dynamic Vocabulary**: Adapts to new words.
 -   **Persistent Memory**: Saves and loads its learned weights and vocabulary.
 -   **Short-Term Conversation Memory**: Maintains a buffer of recent exchanges to provide context-aware responses.
@@ -84,6 +86,8 @@ Here's a breakdown of the configuration parameters:
     -   `lr_decay_steps`: Number of interactions after which the learning rate decays.
     -   `replay_buffer_size`: Maximum size of the replay buffer for experience replay. This stores past interactions for re-training.
     -   `replay_sample_rate`: Probability of sampling from the replay buffer during training.
+    -   `beta1`, `beta2`, `epsilon`: Optional Adam optimizer hyperparameters (currently hardcoded in `transformer.py`; included in config for future use).
+    -   `warmup_steps`: Number of training steps for linear learning rate warmup (currently hardcoded to 1000 in `transformer.py`).
 
 -   **`generation`**: Parameters controlling how Atlas generates responses.
     -   `temperature`: Controls the randomness of predictions. Lower values (e.g., 0.1-0.5) make the model more deterministic and focused, while higher values (e.g., 0.8-1.0) increase creativity and diversity.
@@ -200,6 +204,8 @@ python -m pytest
 ### Training
 
 Every message you send to Atlas (in `dual` or `training` mode) serves as a training example. The model performs one gradient step (backpropagation) after each of your inputs to update its internal parameters. This process now includes:
+-   **Adam Optimizer**: Adaptive per-parameter learning rates replace plain SGD for faster and more stable convergence.
+-   **Learning Rate Warmup**: The effective learning rate ramps up linearly over the first 1000 training steps before reaching the configured base rate.
 -   **Conversation Context**: Your current message is combined with recent conversation history to provide a richer training signal.
 -   **Replay Buffer**: Past user messages are occasionally re-sampled and used for additional training steps, helping the model remember and reinforce earlier learnings.
 -   **Learning Rate Decay**: The learning rate gradually decreases over time to ensure stable convergence.
@@ -248,6 +254,7 @@ The computational resources required depend heavily on the `model` configuration
 ## Troubleshooting
 
 -   **Atlas stops responding or gives strange output**: This can happen if the model's weights become corrupted (e.g., due to NaN/Inf values during training). To reset Atlas, delete the `atlas_model.npz` and `atlas_vocab.pkl` files in the project root. Atlas will then start learning from scratch.
+-   **After upgrading to Adam optimizer**: If you have an existing `atlas_model.npz` from a previous version, delete it (and optionally `atlas_vocab.pkl` if you want a fresh vocabulary) before training. The new Adam optimizer maintains internal momentum state that is not stored in saved model files and is incompatible with weights trained under plain SGD.
 
 ## Future Enhancements
 

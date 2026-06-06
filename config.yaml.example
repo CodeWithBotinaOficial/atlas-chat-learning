@@ -25,6 +25,11 @@ training:
   replay_buffer_size: 200
   # Proportion of samples to draw from the replay buffer during training.
   replay_sample_rate: 0.3
+  # Adam optimizer parameters (optional; currently hardcoded in transformer.py).
+  beta1: 0.9
+  beta2: 0.999
+  epsilon: 1.0e-8
+  warmup_steps: 1000
 
 # Text generation configuration parameters
 generation:

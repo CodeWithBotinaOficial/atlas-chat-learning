@@ -149,7 +149,7 @@ class AtlasBrain:
              return None, None
 
         if len(full_sequence_ids) > self.max_seq_len:
-            full_sequence_ids = full_sequence_ids[len(full_sequence_ids) - (self.max_seq_len - 1):] # Truncate to max_seq_len - 1 to leave space for BOS/EOS
+            full_sequence_ids = full_sequence_ids[-self.max_seq_len:]
 
         input_ids = full_sequence_ids[:-1]
         target_ids = full_sequence_ids[1:]
