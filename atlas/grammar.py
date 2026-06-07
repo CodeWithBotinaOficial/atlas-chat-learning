@@ -70,7 +70,7 @@ class GrammarHelper:
         return ' '.join(cleaned_words)
 
     @staticmethod
-    def filter_short_responses(text: str, min_words: int = 2,
+    def filter_short_responses(text: str, min_words: int = 1,
                                fallback_message: str = "I'm not sure how to answer that properly.") -> str:
         """
         If the response has fewer than `min_words` words and is not a default message,
@@ -90,7 +90,7 @@ class GrammarHelper:
         return text
 
     @staticmethod
-    def _check_for_gibberish(text: str, stopword_ratio_threshold: float = 0.85) -> bool:
+    def _check_for_gibberish(text: str, stopword_ratio_threshold: float = 0.8) -> bool:
         """
         Checks if the response is gibberish based on content words, stopword ratio,
         and excessive overall word repetition.
@@ -107,19 +107,8 @@ class GrammarHelper:
         if total_words >= 3:
             word_counts = Counter(words)
             max_repetition = max(word_counts.values())
-            # If the most frequent word appears at least 3 times AND
-            # it accounts for more than 60% of the total words, AND
-            # the number of unique words is less than 3, then it's gibberish.
-            if max_repetition >= 3 and (max_repetition / total_words) > 0.6 and len(word_counts) < 3:
-                return True
-            # Also, if a word appears 4 or more times regardless of ratio (too repetitive)
-            if max_repetition >= 4:
-                return True
-
-        # Rule 3: Long phrase with any word repeated 3 or more times
-        if total_words >= 8:
-            word_counts = Counter(words)
-            if max(word_counts.values()) >= 3:
+            # Only flag as gibberish if a word appears 4 or more times AND accounts for >80% of total words
+            if max_repetition >= 4 and (max_repetition / total_words) > 0.8:
                 return True
 
         # Rule 2: High Stopword Ratio with Very Low Content (0 content words)
@@ -128,9 +117,6 @@ class GrammarHelper:
             if stopword_ratio > stopword_ratio_threshold:
                 return True # Gibberish due to high stopword ratio and low content
 
-        # If none of the above gibberish conditions were met, then it's NOT gibberish.
-        # This implicitly covers Rule 3: if content_word_count >= 2 and no other gibberish rule triggered,
-        # then it's a valid response.
         return False
 
     @staticmethod
@@ -161,7 +147,7 @@ class GrammarHelper:
         # 5. Filter short responses (after all other corrections)
         final_response = GrammarHelper.filter_short_responses(
             processed_text,
-            min_words=2,
+            min_words=1,
             fallback_message=fallback_not_sure
         )
 

@@ -78,13 +78,13 @@ class TestGrammarHelper(unittest.TestCase):
         self.assertTrue(GrammarHelper._check_for_gibberish("de la", stopword_ratio_threshold=0.6))  # 0 content words
 
         # Gibberish due to excessive repetition in short sentence
-        self.assertTrue(
-            GrammarHelper._check_for_gibberish("tú qué qué qué", stopword_ratio_threshold=0.6))  # "qué" repeats 3 times
+        self.assertFalse(
+            GrammarHelper._check_for_gibberish("tú qué qué qué", stopword_ratio_threshold=0.6))  # "qué" repeats 3 times (< 4)
         self.assertTrue(GrammarHelper._check_for_gibberish("hola hola hola hola",
                                                            stopword_ratio_threshold=0.6))  # "hola" repeats 4 times
-        self.assertTrue(
+        self.assertFalse(
             GrammarHelper._check_for_gibberish("el el el mundo", stopword_ratio_threshold=0.6))  # "el" repeats 3 times
-        self.assertTrue(GrammarHelper._check_for_gibberish("vamos vamos vamos",
+        self.assertFalse(GrammarHelper._check_for_gibberish("vamos vamos vamos",
                                                            stopword_ratio_threshold=0.6))  # "vamos" repeats 3 times
 
         # Edge cases
@@ -102,12 +102,12 @@ class TestGrammarHelper(unittest.TestCase):
         self.assertEqual(GrammarHelper.apply_all("hola hola hola mundo mundo como estas"),
                          "Hola hola mundo mundo como estas.")
 
-        # Example 2: Messy input, now correctly triggers general fallback due to repetition
-        self.assertEqual(GrammarHelper.apply_all("tú qué hola qué bien aquí por haces tú aquí qué"), fallback_general)
+        # Example 2: Messy input, no longer triggers general fallback since max repetition is 3 (< 4)
+        self.assertEqual(GrammarHelper.apply_all("tú qué hola qué bien aquí por haces tú aquí qué"), "Tú qué hola qué bien aquí por haces tú aquí qué.")
 
-        # Example 3: Short response, triggers 'not sure' fallback
-        self.assertEqual(GrammarHelper.apply_all("hi"), fallback_not_sure)
-        self.assertEqual(GrammarHelper.apply_all("ok"), fallback_not_sure)
+        # Example 3: Short response, no longer triggers fallback since min_words=1
+        self.assertEqual(GrammarHelper.apply_all("hi"), "Hi.")
+        self.assertEqual(GrammarHelper.apply_all("ok"), "Ok.")
 
         # Example 4: Already good
         self.assertEqual(GrammarHelper.apply_all("Hello, how are you?"), "Hello, how are you?")
@@ -127,11 +127,11 @@ class TestGrammarHelper(unittest.TestCase):
         self.assertEqual(GrammarHelper.apply_all("la casa es grande y bonita"), "La casa es grande y bonita.")
 
         # Example 9: Check min_words after other corrections
-        # "hola hola" (2 words) should not trigger fallback with min_words=2
+        # "hola hola" (2 words) should not trigger fallback
         self.assertEqual(GrammarHelper.apply_all("hola hola"), "Hola hola.")
 
-        # Example 10: Gibberish due to repetition, caught by _check_for_gibberish
-        self.assertEqual(GrammarHelper.apply_all("hola hola hola"), fallback_general)
+        # Example 10: Under new relaxed rules, these collapse consecutive repetition but are not gibberish
+        self.assertEqual(GrammarHelper.apply_all("hola hola hola"), "Hola hola.")
         self.assertEqual(GrammarHelper.apply_all("qué qué qué"), fallback_general)
 
 

@@ -73,42 +73,63 @@ def chunk_text_for_training(text, max_chunk_size=MAX_CHUNK_SIZE):
 
 def train_brain_from_text(brain, text, source_label):
     """
-    Chunk extracted text and feed each chunk to brain.learn() over multiple epochs.
+    Parse text into alternating prompt/response pairs and train using brain.learn_pair() over multiple epochs.
     """
-    print("[✓] Chunking text for training...")
-    chunks = chunk_text_for_training(text)
-    if not chunks:
-        print("[✗] No trainable text chunks found after processing.", file=sys.stderr)
+    print("[✓] Parsing text into prompt-response pairs...")
+    
+    def clean_prefix(line):
+        line_lower = line.lower()
+        if line_lower.startswith("usuario "):
+            return line[len("usuario "):].strip()
+        if line_lower.startswith("usuario:"):
+            return line[len("usuario:"):].strip()
+        if line_lower.startswith("atlas "):
+            return line[len("atlas "):].strip()
+        if line_lower.startswith("atlas:"):
+            return line[len("atlas:"):].strip()
+        return line
+
+    cleaned_lines = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        cleaned = clean_prefix(line)
+        if cleaned:
+            cleaned_lines.append(cleaned)
+
+    pairs = []
+    for i in range(0, len(cleaned_lines) - 1, 2):
+        pairs.append((cleaned_lines[i], cleaned_lines[i+1]))
+
+    if not pairs:
+        print("[✗] No valid prompt-response pairs found after parsing.", file=sys.stderr)
         sys.exit(1)
 
-    epochs = 80
-    print(f"[✓] Training Atlas with {len(chunks)} chunk(s) over {epochs} epochs... (This may take a moment)")
-    learned_chunks = 0
-    skipped_chunks = 0
+    epochs = 50
+    print(f"[✓] Training Atlas with {len(pairs)} pair(s) over {epochs} epochs... (This may take a moment)")
+    
+    total_pairs = len(pairs)
+    learned_pairs = 0
 
     for epoch in range(1, epochs + 1):
         epoch_learned = 0
-        epoch_skipped = 0
-        for index, chunk in enumerate(chunks, start=1):
-            result = brain.learn(chunk)
+        for prompt, response in pairs:
+            result = brain.learn_pair(prompt, response)
             if result is not None:
                 epoch_learned += 1
-            else:
-                epoch_skipped += 1
         
-        # Use first epoch counts as a representative baseline for final logging
         if epoch == 1:
-            learned_chunks = epoch_learned
-            skipped_chunks = epoch_skipped
+            learned_pairs = epoch_learned
             
-        print(f"[✓] Epoch {epoch}/{epochs} complete - Learned: {epoch_learned}, Skipped: {epoch_skipped}")
+        print(f"[✓] Epoch {epoch}/{epochs} complete - Learned: {epoch_learned}/{total_pairs}")
 
-    if learned_chunks == 0:
-        print(f"[✗] No chunks from '{source_label}' could be used for training.", file=sys.stderr)
+    if learned_pairs == 0:
+        print(f"[✗] No pairs from '{source_label}' could be used for training.", file=sys.stderr)
         sys.exit(1)
 
     brain.save()
-    print(f"[✓] Training complete! Learned from {learned_chunks} chunk(s), skipped {skipped_chunks}. Model saved. Exiting.")
+    print(f"[✓] Training complete! Learned from {learned_pairs}/{total_pairs} pair(s). Model saved. Exiting.")
 
 
 def run_document_training(brain, file_path=None, url=None):

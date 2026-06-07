@@ -378,3 +378,17 @@ def test_learning_rate_decay():
     # 4 interactions: LR = initial_lr * 0.5 * 0.5
     brain.learn("test message")
     assert brain.interaction_count == 4
+
+def test_brain_learn_pair():
+    brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=DEFAULT_TEST_CONFIG)
+    initial_embedding = np.copy(brain.transformer.token_embedding)
+    initial_interaction_count = brain.interaction_count
+
+    prompt = "what is your name"
+    response = "my name is atlas"
+
+    loss = brain.learn_pair(prompt, response)
+
+    assert not np.array_equal(initial_embedding, brain.transformer.token_embedding)
+    assert loss is not None
+    assert brain.interaction_count == initial_interaction_count + 1

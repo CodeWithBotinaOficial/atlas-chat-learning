@@ -258,13 +258,7 @@ class AtlasBrain:
             # Re-run train_step to ensure it's not just the first check
             _ = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
             unk_embedding_after = self.transformer.token_embedding[self.UNK_TOKEN_ID]
-            if not np.array_equal(unk_embedding_before, unk_embedding_after):
-                # print(f"DEBUG: UNK token embedding changed after training step {self.interaction_count}.")
-                pass
-            else:
-                # print(f"DEBUG: UNK token embedding DID NOT change after training step {self.interaction_count}.")
-                pass
-
+            # DEBUG: UNK token embedding prints commented out to prevent confusing logs
 
         # Occasionally sample from replay buffer for additional training
         if self.replay_buffer and random.random() < self.replay_sample_rate:
@@ -279,6 +273,51 @@ class AtlasBrain:
 
         # if loss is not None:
         #     print(f"Learning loss: {loss:.4f}, Current LR: {current_learning_rate:.6f}")
+        return loss
+
+    def learn_pair(self, prompt, response):
+        """
+        Trains the model on a prompt-response pair formatted as:
+        [BOS] prompt response [EOS]
+        """
+        prompt_tokens = self._tokenize(prompt)
+        response_tokens = self._tokenize(response)
+
+        prompt_ids = self._words_to_ids(prompt_tokens)
+        response_ids = self._words_to_ids(response_tokens)
+
+        full_sequence_ids = [self.BOS_TOKEN_ID] + prompt_ids + response_ids + [self.EOS_TOKEN_ID]
+
+        if len(full_sequence_ids) > self.max_seq_len:
+            full_sequence_ids = full_sequence_ids[-self.max_seq_len:]
+
+        input_ids = full_sequence_ids[:-1]
+        target_ids = full_sequence_ids[1:]
+
+        input_ids_padded = np.full(self.max_seq_len, self.PAD_TOKEN_ID, dtype=int)
+        target_ids_padded = np.full(self.max_seq_len, self.PAD_TOKEN_ID, dtype=int)
+
+        input_ids_padded[:len(input_ids)] = input_ids
+        target_ids_padded[:len(target_ids)] = target_ids
+
+        input_batch = np.array([input_ids_padded])
+        target_batch = np.array([target_ids_padded])
+
+        self.interaction_count += 1
+        current_learning_rate = self.learning_rate * (self.lr_decay_rate ** (self.interaction_count // self.lr_decay_steps))
+
+        loss = self.transformer.train_step(
+            input_batch,
+            target_batch,
+            current_learning_rate,
+            training=True,
+            pad_token_id=self.PAD_TOKEN_ID
+        )
+
+        # Check for NaN/inf weights occasionally
+        if self.interaction_count % self.nan_check_interval == 0:
+            self._check_weights_for_nan()
+
         return loss
 
     def respond(self, prompt=None):

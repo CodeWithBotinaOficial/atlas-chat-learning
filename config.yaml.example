@@ -29,7 +29,7 @@ training:
   beta1: 0.9
   beta2: 0.999
   epsilon: 1.0e-8
-  warmup_steps: 20
+  warmup_steps: 10
 
 # Text generation configuration parameters
 generation:
