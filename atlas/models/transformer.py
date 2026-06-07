@@ -46,8 +46,13 @@ class Transformer:
         self.output_layer = (np.random.randn(self.embed_dim, self.vocab_size) * 0.01).astype(self.dtype)
         self.output_bias = np.zeros(self.vocab_size, dtype=self.dtype)
 
-        # Adam optimizer state and warmup
-        self.warmup_steps = 1000
+        # Adam optimizer state and warmup from training config
+        training_config = config.get('training', {})
+        self.warmup_steps = training_config.get('warmup_steps', 1000)
+        self.beta1 = training_config.get('beta1', 0.9)
+        self.beta2 = training_config.get('beta2', 0.999)
+        self.epsilon = training_config.get('epsilon', 1e-8)
+
         self.train_step_count = 0
         self.m = {}
         self.v = {}
@@ -267,11 +272,18 @@ class Transformer:
         self.update_weights_adam(effective_lr)
         return loss
 
-    def update_weights_adam(self, learning_rate, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def update_weights_adam(self, learning_rate, beta1=None, beta2=None, epsilon=None):
         """
         Updates all model parameters using Adam with the computed gradients.
         Applies gradient clipping before the Adam update.
         """
+        if beta1 is None:
+            beta1 = self.beta1
+        if beta2 is None:
+            beta2 = self.beta2
+        if epsilon is None:
+            epsilon = self.epsilon
+
         all_grads = self._collect_all_grads()
 
         # Apply gradient clipping

@@ -81,8 +81,8 @@ class AtlasBrain:
         # Memory hyperparameters from config
         self.max_history_length = self.config['memory']['max_history_length']
 
-        # NaN check frequency (not in config, keep as default or add to config if desired)
-        self.nan_check_interval = 10 # Check every 10 interactions
+        # NaN check frequency
+        self.nan_check_interval = self.config.get('training', {}).get('nan_check_interval', 10)
 
         # Conversation history buffer
         self.conversation_history = []  # Stores (user_message_ids, atlas_response_ids)
@@ -114,7 +114,8 @@ class AtlasBrain:
             'vocab_size': self.vocab_size,
             'model': self.config['model'],
             'generation': self.config['generation'],
-            'performance': self.config.get('performance', {}) # Pass performance config safely
+            'performance': self.config.get('performance', {}), # Pass performance config safely
+            'training': self.config.get('training', {})
         }
         self.transformer = Transformer(transformer_config)
 
@@ -213,7 +214,8 @@ class AtlasBrain:
                 'vocab_size': self.vocab_size,
                 'model': self.config['model'],
                 'generation': self.config['generation'],
-                'performance': self.config.get('performance', {})
+                'performance': self.config.get('performance', {}),
+                'training': self.config.get('training', {})
             }
             self.transformer = Transformer(transformer_config)
             # Ensure vocab size is updated for the new transformer
@@ -526,7 +528,8 @@ class AtlasBrain:
                 'vocab_size': self.vocab_size,
                 'model': self.config['model'],
                 'generation': self.config['generation'],
-                'performance': self.config.get('performance', {}) # Pass performance config safely
+                'performance': self.config.get('performance', {}), # Pass performance config safely
+                'training': self.config.get('training', {})
             }
             self.transformer = Transformer(transformer_config)
             # Update transformer's vocab size after re-initialization

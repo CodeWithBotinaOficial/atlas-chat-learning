@@ -9,6 +9,10 @@ TRAINING_DEFAULTS = {
     'beta2': 0.999,
     'epsilon': 1e-8,
     'warmup_steps': 1000,
+    'epochs': 50,
+    'chunk_size': 1000,
+    'nan_check_interval': 10,
+    'auto_save_interval': 5,
 }
 
 PERFORMANCE_DEFAULTS = {

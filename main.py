@@ -43,13 +43,16 @@ except Exception as e:
     print(f"An error occurred while setting up readline: {e}. Command history and arrow keys may not work.")
 # --- End Readline setup ---
 
-MAX_CHUNK_SIZE = 1000 # Max characters per chunk for training
-
-
-def chunk_text_for_training(text, max_chunk_size=MAX_CHUNK_SIZE):
+def chunk_text_for_training(text, max_chunk_size=None):
     """
     Split text into chunks for training, respecting word boundaries.
     """
+    if max_chunk_size is None:
+        try:
+            config = load_config()
+            max_chunk_size = config.get('training', {}).get('chunk_size', 1000)
+        except Exception:
+            max_chunk_size = 1000
     words = text.split()
     current_chunk = []
     current_chunk_len = 0
@@ -106,23 +109,29 @@ def train_brain_from_text(brain, text, source_label):
         print("[✗] No valid prompt-response pairs found after parsing.", file=sys.stderr)
         sys.exit(1)
 
-    epochs = 50
+    epochs = brain.config.get('training', {}).get('epochs', 50)
     print(f"[✓] Training Atlas with {len(pairs)} pair(s) over {epochs} epochs... (This may take a moment)")
     
     total_pairs = len(pairs)
     learned_pairs = 0
 
-    for epoch in range(1, epochs + 1):
-        epoch_learned = 0
-        for prompt, response in pairs:
-            result = brain.learn_pair(prompt, response)
-            if result is not None:
-                epoch_learned += 1
-        
-        if epoch == 1:
-            learned_pairs = epoch_learned
+    try:
+        for epoch in range(1, epochs + 1):
+            epoch_learned = 0
+            for prompt, response in pairs:
+                result = brain.learn_pair(prompt, response)
+                if result is not None:
+                    epoch_learned += 1
             
-        print(f"[✓] Epoch {epoch}/{epochs} complete - Learned: {epoch_learned}/{total_pairs}")
+            if epoch == 1:
+                learned_pairs = epoch_learned
+                
+            print(f"[✓] Epoch {epoch}/{epochs} complete - Learned: {epoch_learned}/{total_pairs}")
+    except KeyboardInterrupt:
+        print("\n[!] Training interrupted by user. Saving model and generating report...")
+        brain.save()
+        brain.generate_report()
+        sys.exit(0)
 
     if learned_pairs == 0:
         print(f"[✗] No pairs from '{source_label}' could be used for training.", file=sys.stderr)
@@ -266,7 +275,7 @@ def main():
     print("Welcome to Atlas! Type 'quit' or 'exit' to save and exit.")
 
     interaction_count = 0
-    auto_save_interval = 5
+    auto_save_interval = brain.config.get('training', {}).get('auto_save_interval', 5)
 
     try:
         while True:

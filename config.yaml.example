@@ -30,6 +30,14 @@ training:
   beta2: 0.999
   epsilon: 1.0e-8
   warmup_steps: 10
+  # Number of epochs to train when using --file or --url
+  epochs: 50
+  # Maximum characters per chunk for text splitting
+  chunk_size: 1000
+  # Interval (in interactions) for NaN weight checks
+  nan_check_interval: 10
+  # Interval (in interactions) for auto-saving the model
+  auto_save_interval: 5
 
 # Text generation configuration parameters
 generation:
