@@ -1,8 +1,11 @@
 # tests/test_transformer.py
 import numpy as np
 import pytest
-from atlas.transformer import (Transformer, PositionalEncoding, MultiHeadSelfAttention, FeedForward, TransformerBlock,
-                               softmax, label_smoothing_loss, label_smoothing_backward, _top_k_top_p_sampling)
+from atlas.models import Transformer, MultiHeadSelfAttention, FeedForward, TransformerBlock
+from atlas.models.positional_encoding import PositionalEncoding
+from atlas.models.activations import softmax
+from atlas.models.losses import label_smoothing_loss, label_smoothing_backward
+from atlas.models.sampling import _top_k_top_p_sampling
 from atlas.brain import AtlasBrain  # Import AtlasBrain to get special token IDs
 
 

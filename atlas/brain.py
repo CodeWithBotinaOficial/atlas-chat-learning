@@ -5,7 +5,7 @@ import re
 import os
 import random
 
-from atlas.transformer import Transformer
+from atlas.models import Transformer
 from atlas.grammar import GrammarHelper # Import GrammarHelper
 from atlas.config_loader import load_config # Import load_config
 
