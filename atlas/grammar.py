@@ -90,7 +90,7 @@ class GrammarHelper:
         return text
 
     @staticmethod
-    def _check_for_gibberish(text: str, stopword_ratio_threshold: float = 0.6) -> bool:
+    def _check_for_gibberish(text: str, stopword_ratio_threshold: float = 0.85) -> bool:
         """
         Checks if the response is gibberish based on content words, stopword ratio,
         and excessive overall word repetition.
@@ -122,8 +122,8 @@ class GrammarHelper:
             if max(word_counts.values()) >= 3:
                 return True
 
-        # Rule 2: High Stopword Ratio with Very Low Content (0 or 1 content word)
-        if content_word_count < 2 and total_words > 0:
+        # Rule 2: High Stopword Ratio with Very Low Content (0 content words)
+        if content_word_count < 1 and total_words > 0:
             stopword_ratio = stopword_count / total_words
             if stopword_ratio > stopword_ratio_threshold:
                 return True # Gibberish due to high stopword ratio and low content

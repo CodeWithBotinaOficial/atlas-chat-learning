@@ -73,7 +73,7 @@ def chunk_text_for_training(text, max_chunk_size=MAX_CHUNK_SIZE):
 
 def train_brain_from_text(brain, text, source_label):
     """
-    Chunk extracted text and feed each chunk to brain.learn().
+    Chunk extracted text and feed each chunk to brain.learn() over multiple epochs.
     """
     print("[✓] Chunking text for training...")
     chunks = chunk_text_for_training(text)
@@ -81,18 +81,27 @@ def train_brain_from_text(brain, text, source_label):
         print("[✗] No trainable text chunks found after processing.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[✓] Training Atlas with {len(chunks)} chunk(s)... (This may take a moment)")
+    epochs = 80
+    print(f"[✓] Training Atlas with {len(chunks)} chunk(s) over {epochs} epochs... (This may take a moment)")
     learned_chunks = 0
     skipped_chunks = 0
 
-    for index, chunk in enumerate(chunks, start=1):
-        result = brain.learn(chunk)
-        if result is not None:
-            learned_chunks += 1
-            print(f"[✓] Trained chunk {index}/{len(chunks)}")
-        else:
-            skipped_chunks += 1
-            print(f"[!] Skipped chunk {index}/{len(chunks)} (too short or invalid)")
+    for epoch in range(1, epochs + 1):
+        epoch_learned = 0
+        epoch_skipped = 0
+        for index, chunk in enumerate(chunks, start=1):
+            result = brain.learn(chunk)
+            if result is not None:
+                epoch_learned += 1
+            else:
+                epoch_skipped += 1
+        
+        # Use first epoch counts as a representative baseline for final logging
+        if epoch == 1:
+            learned_chunks = epoch_learned
+            skipped_chunks = epoch_skipped
+            
+        print(f"[✓] Epoch {epoch}/{epochs} complete - Learned: {epoch_learned}, Skipped: {epoch_skipped}")
 
     if learned_chunks == 0:
         print(f"[✗] No chunks from '{source_label}' could be used for training.", file=sys.stderr)

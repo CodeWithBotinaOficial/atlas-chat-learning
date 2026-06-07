@@ -259,9 +259,11 @@ class AtlasBrain:
             _ = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
             unk_embedding_after = self.transformer.token_embedding[self.UNK_TOKEN_ID]
             if not np.array_equal(unk_embedding_before, unk_embedding_after):
-                print(f"DEBUG: UNK token embedding changed after training step {self.interaction_count}.")
+                # print(f"DEBUG: UNK token embedding changed after training step {self.interaction_count}.")
+                pass
             else:
-                print(f"DEBUG: UNK token embedding DID NOT change after training step {self.interaction_count}.")
+                # print(f"DEBUG: UNK token embedding DID NOT change after training step {self.interaction_count}.")
+                pass
 
 
         # Occasionally sample from replay buffer for additional training
