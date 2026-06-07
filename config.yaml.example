@@ -71,3 +71,14 @@ performance:
   half_precision: false
   # Optional: auto-adjust model if RAM is limited (future)
   max_ram_gb: null
+
+# Model training analytics reporting parameters
+reporting:
+  # If true, records training metrics and generates a report on exit
+  enabled: true
+  # Directory where reports are saved
+  output_dir: .reports/statistics
+  # If true, compiles visual plots using matplotlib into a PDF report
+  generate_graphs: true
+  # Maximum history points to store in memory (avoids memory leak over long runs)
+  max_history_points: 1000

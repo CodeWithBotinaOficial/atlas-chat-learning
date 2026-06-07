@@ -238,6 +238,39 @@ Atlas's responses undergo a post-processing step to improve their readability an
 
 This step aims to make the AI's output feel more natural and polished, even if the underlying model is still learning.
 
+### Model Analytics and Reports
+
+Atlas features an automatic training session analytics reporting system. Every time a training session completes—whether through interactive chat (`--dual`, `--training`), document training (`--file`, `--url`), or web scraping (`--scraping`)—Atlas generates a timestamped report folder under `.reports/statistics/dd-mm-yyyy-hh-mm/`.
+
+This folder contains:
+1. **`metrics.json`**: Raw recorded metrics per interaction step (loss, learning rate, vocabulary size, timestamp).
+2. **`analytics.pdf`**: A multi-page PDF report with mathematical details and visual plots (requires `matplotlib`):
+   - **Executive Summary (Page 1)**: Meta details of the training session (duration, total steps, final loss, final learning rate) and model architecture hyperparameters.
+   - **Training Curves (Page 2)**: Subplots tracking Loss progress (including a moving average line), Learning Rate schedule, and Vocabulary Size growth over time.
+   - **Embedding Analysis (Page 3)**: A histogram of token embedding L2 norms, embedding statistics (mean, std, percentiles), and a lookup table of the most active (highest norm) and least active (lowest norm) vocabulary terms.
+   - **Parameter Complexity & Confidence (Page 4)**: A color-coded heatmap slice of the output projection matrix, shapes and norms of all parameter groups, and a prediction confidence entropy index.
+
+*Note: If `matplotlib` is not installed or the system is missing a graphical display server, Atlas will output a warning and generate a plain text report (`analytics_summary.txt`) alongside the raw `metrics.json` instead of the PDF.*
+
+#### Configuration
+You can configure or disable reporting in `config.yaml`:
+```yaml
+reporting:
+  enabled: true             # Set false to disable recording and report generation
+  output_dir: .reports/statistics
+  generate_graphs: true      # Set false to only generate metrics.json and text summary
+  max_history_points: 1000   # Caps history size to prevent high RAM usage in very long runs
+```
+
+#### Example Output Directory Structure
+```text
+.reports/
+└── statistics/
+    └── 07-06-2026-12-42/
+        ├── analytics.pdf
+        └── metrics.json
+```
+
 ## Pre-trained Model (Optional)
 
 You can download pre-trained model files (`atlas_model.npz` and `atlas_vocab.pkl`) from the [Releases](https://github.com/CodeWithBotinaOficial/atlas-chat-learning/releases) page.

@@ -290,6 +290,9 @@ def test_conversation_history_truncation():
     test_config_for_history['memory']['max_history_length'] = 2 
     brain = AtlasBrain(model_path=TEST_MODEL_PATH, vocab_path=TEST_VOCAB_PATH, config=test_config_for_history)
 
+    # Mock transformer generate to return a guaranteed non-empty response
+    brain.transformer.generate = lambda prompt_tokens, pad_token_id=0, eos_token_id=3: np.append(prompt_tokens[0], [4, 5, 3])
+
     # Simulate conversation turns
     user_msg_1 = "user message 1"
     brain.learn(user_msg_1)

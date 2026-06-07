@@ -4,6 +4,7 @@ import pickle
 import re
 import os
 import random
+from datetime import datetime
 
 from atlas.models import Transformer
 from atlas.grammar import GrammarHelper # Import GrammarHelper
@@ -91,6 +92,22 @@ class AtlasBrain:
 
         # Learning rate decay
         self.interaction_count = 0
+
+        # Analytics metrics history and session start time
+        self.metrics_history = []
+        self.start_time = datetime.now()
+
+        # Initialize MetricsRecorder if reporting enabled
+        reporting_enabled = self.config.get('reporting', {}).get('enabled', True)
+        if reporting_enabled:
+            try:
+                from atlas.analytics import MetricsRecorder
+                self.metrics_recorder = MetricsRecorder(self.config, self.metrics_history, self.start_time)
+            except Exception as e:
+                print(f"WARNING: Could not initialize MetricsRecorder: {e}")
+                self.metrics_recorder = None
+        else:
+            self.metrics_recorder = None
 
         # Initialize Transformer with current vocab_size and config
         transformer_config = {
@@ -244,6 +261,10 @@ class AtlasBrain:
         # Train on current user message
         loss = self.transformer.train_step(input_batch, target_batch, current_learning_rate, training=True, pad_token_id=self.PAD_TOKEN_ID)
 
+        # Record metrics if loss is not None and recorder is active
+        if loss is not None and self.metrics_recorder is not None:
+            self.metrics_recorder.add_point(loss, current_learning_rate, self.vocab_size)
+
         # Check embedding for "hello" after training
         if "hello" in self.word_to_idx and hello_embedding_before is not None:
             hello_id = self.word_to_idx["hello"]
@@ -313,6 +334,10 @@ class AtlasBrain:
             training=True,
             pad_token_id=self.PAD_TOKEN_ID
         )
+
+        # Record metrics if loss is not None and recorder is active
+        if loss is not None and self.metrics_recorder is not None:
+            self.metrics_recorder.add_point(loss, current_learning_rate, self.vocab_size)
 
         # Check for NaN/inf weights occasionally
         if self.interaction_count % self.nan_check_interval == 0:
@@ -393,6 +418,16 @@ class AtlasBrain:
             self.conversation_history.pop(0)
 
         return corrected_atlas_response
+
+    def generate_report(self):
+        """
+        Generates a training session analytics report.
+        """
+        if self.metrics_recorder is not None:
+            try:
+                self.metrics_recorder.generate_report(self)
+            except Exception as e:
+                print(f"WARNING: Error while generating report: {e}")
 
     def save(self):
         """

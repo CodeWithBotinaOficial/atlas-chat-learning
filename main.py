@@ -129,7 +129,8 @@ def train_brain_from_text(brain, text, source_label):
         sys.exit(1)
 
     brain.save()
-    print(f"[✓] Training complete! Learned from {learned_pairs}/{total_pairs} pair(s). Model saved. Exiting.")
+    print(f"[✓] Training complete! Learned from {learned_pairs}/{total_pairs} pair(s). Model saved.")
+    brain.generate_report()
 
 
 def run_document_training(brain, file_path=None, url=None):
@@ -312,11 +313,16 @@ def main():
     except KeyboardInterrupt:
         print("\nAtlas: Interrupted. Saving memory before exiting...")
         brain.save()
+        brain.generate_report()
         sys.exit(0)
     except EOFError: # Handles Ctrl+D
         print("\nAtlas: EOF detected. Saving memory before exiting...")
         brain.save()
+        brain.generate_report()
         sys.exit(0)
+
+    # Generate report on normal interactive exit
+    brain.generate_report()
 
 if __name__ == "__main__":
     main()

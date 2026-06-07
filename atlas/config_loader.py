@@ -17,6 +17,13 @@ PERFORMANCE_DEFAULTS = {
     'max_ram_gb': None,
 }
 
+REPORTING_DEFAULTS = {
+    'enabled': True,
+    'output_dir': '.reports/statistics',
+    'generate_graphs': True,
+    'max_history_points': 1000,
+}
+
 def load_config(config_path=DEFAULT_CONFIG_PATH):
     if not os.path.exists(config_path):
         print("Configuration file not found. Please copy 'config.yaml.example' to 'config.yaml' and edit it as needed. Exiting.")
@@ -33,5 +40,10 @@ def load_config(config_path=DEFAULT_CONFIG_PATH):
         config['performance'] = {}
     for key, default_value in PERFORMANCE_DEFAULTS.items():
         config['performance'].setdefault(key, default_value)
+
+    if 'reporting' not in config:
+        config['reporting'] = {}
+    for key, default_value in REPORTING_DEFAULTS.items():
+        config['reporting'].setdefault(key, default_value)
 
     return config
