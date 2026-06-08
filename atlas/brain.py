@@ -440,6 +440,7 @@ class AtlasBrain:
         np.savez(self.model_path, **self.transformer.params)
 
         # Save vocabulary and other brain state
+        # Note: 'config' is no longer saved/used to prevent overriding user settings on load.
         brain_state = {
             'word_to_idx': self.word_to_idx,
             'idx_to_word': self.idx_to_word,
@@ -447,7 +448,6 @@ class AtlasBrain:
             'conversation_history': self.conversation_history,
             'replay_buffer': self.replay_buffer,
             'interaction_count': self.interaction_count,
-            'config': self.config, # Save the entire config
         }
         with open(self.vocab_path, 'wb') as f:
             pickle.dump(brain_state, f)
@@ -469,19 +469,9 @@ class AtlasBrain:
                 self.replay_buffer = brain_state.get('replay_buffer', [])
                 self.interaction_count = brain_state.get('interaction_count', 0)
                 
-                # Load config from saved state, if available, otherwise use current config
-                loaded_config = brain_state.get('config')
-                if loaded_config:
-                    # Merge loaded config with current config to handle new parameters
-                    # This prioritizes loaded values but allows new config defaults to be used
-                    def merge_configs(base, new):
-                        for k, v in new.items():
-                            if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                                base[k] = merge_configs(base[k], v)
-                            else:
-                                base[k] = v
-                        return base
-                    self.config = merge_configs(self.config, loaded_config)
+                # Ignore saved config from state to prevent overriding the current config.yaml settings
+                if 'config' in brain_state:
+                    print("Ignoring saved configuration from atlas_vocab.pkl; using current config.yaml.")
 
                 # Apply low_memory preset if enabled AFTER loading and merging config
                 if self.config.get('performance', {}).get('low_memory', False):
